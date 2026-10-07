@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build catalog
+        run: npm run build:catalog
+
+      - name: Ensure committed catalog is current
+        run: git diff --exit-code -- data/catalog.json
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build release package
+        run: |
+          npm run package:release -- --run-number "$GITHUB_RUN_NUMBER" --repository "$GITHUB_REPOSITORY"
+
+      - name: Verify release package
+        run: |
+          set -euo pipefail
+          test -f dist/foundry-rme.zip
+          test -f dist/module.json
+          test -f dist/release.json
+          node <<'NODE'
+            const { execFileSync } = require('node:child_process');
+            const fs = require('node:fs');
+            const assert = require('node:assert/strict');
+
+            const repo = process.env.GITHUB_REPOSITORY;
+            const zip = 'dist/foundry-rme.zip';
+
+            const listing = execFileSync('unzip', ['-Z', '-1', zip], { encoding: 'utf8' })
+              .split('\n')
+              .map((l) => l.trim())
+              .filter(Boolean);
+
+            // module.json must be at the archive root, never under package/.
+            assert.ok(listing.includes('module.json'), 'module.json must be at archive root');
+            assert.ok(!listing.includes('package/module.json'), 'no package/ prefix');
+            assert.ok(listing.includes('data/catalog.json'), 'data/catalog.json must be archived');
+
+            const release = JSON.parse(fs.readFileSync('dist/release.json', 'utf8'));
+            const tag = release.tag;
+            const version = release.version;
+
+            // The staged manifest and the archived manifest must match exactly.
+            const zipManifestText = execFileSync('unzip', ['-p', zip, 'module.json'], { encoding: 'utf8' });
+            const zipManifest = JSON.parse(zipManifestText);
+            const distManifest = JSON.parse(fs.readFileSync('dist/module.json', 'utf8'));
+            assert.deepEqual(zipManifest, distManifest, 'archived manifest must equal staged manifest');
+
+            // The staged manifest must carry the exact release URL, tag, and version.
+            assert.equal(zipManifest.version, version, 'manifest version must match release.json');
+            assert.equal(
+              zipManifest.manifest,
+              `https://github.com/${repo}/releases/latest/download/module.json`,
+              'manifest URL must be the latest-download URL'
+            );
+            assert.equal(
+              zipManifest.download,
+              `https://github.com/${repo}/releases/download/${tag}/foundry-rme.zip`,
+              'download URL must use the release tag'
+            );
+          NODE
+
+      - name: Publish or reconcile GitHub release
+        run: |
+          set -euo pipefail
+          TAG=$(node -e "const r=require('./dist/release.json');process.stdout.write(r.tag)")
+          VERSION=$(node -e "const r=require('./dist/release.json');process.stdout.write(r.version)")
+          echo "Release tag: $TAG (version $VERSION)"
+
+          REQUIRED=(module.json foundry-rme.zip)
+          declare -A FILES=( [module.json]=dist/module.json [foundry-rme.zip]=dist/foundry-rme.zip )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "== Release $TAG already exists; reconciling assets =="
+            TARGET=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish)
+            if [ "$TARGET" != "$GITHUB_SHA" ]; then
+              echo "Existing release $TAG targets '$TARGET', not current '$GITHUB_SHA'" >&2
+              exit 1
+            fi
+
+            # Record existing assets. Empty output means none exist.
+            gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)\t\(.size)"' > "$RUNNER_TEMP/assets.txt"
+
+            asset_size() {
+              awk -F'\t' -v n="$1" '$1==n { print $2 }' "$RUNNER_TEMP/assets.txt"
+            }
+
+            for name in "${REQUIRED[@]}"; do
+              size=$(asset_size "$name")
+              if [ -z "$size" ]; then
+                echo "Uploading missing asset: $name"
+                gh release upload "$TAG" "${FILES[$name]}"
+              else
+                echo "Asset $name already present (size $size)"
+                if [ "$size" -eq 0 ]; then
+                  echo "Asset $name has zero size; refusing to proceed" >&2
+                  exit 1
+                fi
+              fi
+            done
+          else
+            echo "== Creating release $TAG =="
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --latest=false \
+              --generate-notes \
+              dist/module.json dist/foundry-rme.zip
+          fi
+
+          echo "== Confirming release $TAG =="
+          MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)
+          if [ "$MAIN_SHA" = "$GITHUB_SHA" ]; then
+            echo "main head ($MAIN_SHA) matches GITHUB_SHA; marking $TAG latest"
+            gh release edit "$TAG" --latest
+          else
+            echo "main head is $MAIN_SHA, not $GITHUB_SHA; leaving $TAG nonlatest"
+          fi
