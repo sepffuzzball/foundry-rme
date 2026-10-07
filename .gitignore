@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+coverage/
+dist/
+
+# Logs
+*.log
+
+# Environment files (keep the example)
+.env*
+!.env.example
+
+# Local IDE and OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Local graphify knowledge-graph output (regenerate with `graphify update .`)
+graphify-out/

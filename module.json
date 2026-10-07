@@ -1,0 +1,10 @@
+{
+  "id": "foundry-rme",
+  "title": "Revised Martial Equipment",
+  "description": "Equipment catalog and training tools for Revised Martial Equipment.",
+  "version": "0.1.0",
+  "compatibility": { "minimum": "14.367", "verified": "14.368" },
+  "relationships": { "systems": [{ "id": "dnd5e", "type": "system", "compatibility": { "minimum": "6.0.6" } }] },
+  "esmodules": ["src/main.mjs"],
+  "styles": ["styles/rme.css"]
+}

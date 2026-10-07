@@ -1,0 +1,1 @@
+{"name":"foundry-rme","private":true,"type":"module","scripts":{"test":"node --test","build:catalog":"node scripts/build-catalog.mjs"}}
