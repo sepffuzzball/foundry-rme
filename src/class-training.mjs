@@ -87,6 +87,53 @@ const ARMOR_GRANT_BY_CLASS = {
   wizard: { armor: [], shields: 'none' },
 };
 
+// Multiclass basic training (rules/ClassTraining.md "Multiclass Basic
+// Training" table). These grants are the pure RME multiclass grants, distinct
+// from the single-class starting classGrants above. Skill/tool proficiencies
+// named in the table (bard skills/instruments, rogue skill/thieves' tools,
+// ranger skill) are not armor/weapon grants and are deliberately not produced
+// here; the caller reports them elsewhere.
+const MULTICLASS_CATEGORY_CHOICE_CLASSES = new Set(['barbarian', 'fighter', 'paladin', 'ranger']);
+
+// Multiclass group restrictions, from the multiclass table. These differ from
+// the single-class restrictions above (e.g. paladin also forbids Whips, and no
+// class forbids a property at the group level here).
+const MULTICLASS_FORBIDDEN_GROUP_BY_CLASS = {
+  barbarian: ['Firearms', 'Crossbows'],
+  paladin: ['Firearms', 'Throwing Weapons', 'Whips'],
+  ranger: ['Polearms', 'Flails'],
+};
+
+// A weapon property excluded from a class's chosen multiclass categories,
+// enforced per-item (rules/ClassTraining.md):
+//   barbarian - no weapon with the Clockwork property
+//   ranger    - no weapon with the Clockwork property
+const MULTICLASS_EXCLUDED_PROPERTY_BY_CLASS = {
+  barbarian: 'Clockwork',
+  ranger: 'Clockwork',
+};
+
+// Multiclass armor + shield grants per class. `armor` lists the armor
+// categories granted, `shields` one of 'all' | 'no-clockwork' | 'none'. The
+// multiclass table grants shields without the Clockwork qualifier, and never
+// grants heavy armor (fighter/paladin take light+medium, not 'all armors',
+// when multiclassing; barbarian takes shields but no armor at all).
+const MULTICLASS_ARMOR_GRANT_BY_CLASS = {
+  artificer: { armor: ['medium', 'light'], shields: 'all' },
+  barbarian: { armor: [], shields: 'all' },
+  bard: { armor: ['light'], shields: 'none' },
+  cleric: { armor: ['medium', 'light'], shields: 'all' },
+  druid: { armor: ['medium', 'light'], shields: 'all' },
+  fighter: { armor: ['medium', 'light'], shields: 'all' },
+  monk: { armor: [], shields: 'none' },
+  paladin: { armor: ['medium', 'light'], shields: 'all' },
+  ranger: { armor: ['medium', 'light'], shields: 'all' },
+  rogue: { armor: ['light'], shields: 'none' },
+  sorcerer: { armor: [], shields: 'none' },
+  warlock: { armor: ['light'], shields: 'none' },
+  wizard: { armor: [], shields: 'none' },
+};
+
 // The 13 class identifiers, lowercase. Note the source lists "12 classes" but
 // enumerates 13; the enumeration is authoritative.
 export const CLASS_IDS = [
@@ -188,14 +235,25 @@ function normalizeClass(classId) {
 // Weapons, ranger Polearms/Flails). Property-based exclusions (Clockwork /
 // Conceal) are NOT applied here - they are enforced per-item in classGrants;
 // a category containing an excluded item is still selectable.
-export function eligibleGroups(classId, equipment) {
-  const id = normalizeClass(classId);
+function eligibleGroupsCore(equipment, forbiddenGroups) {
   const index = indexEquipment(equipment);
-  const forbidden = new Set(FORBIDDEN_GROUP_BY_CLASS[id] || []);
+  const forbidden = new Set(forbiddenGroups);
   const groups = [...weaponGroupSet(index)];
   return groups
     .filter((group) => !forbidden.has(group))
     .sort();
+}
+
+export function eligibleGroups(classId, equipment) {
+  const id = normalizeClass(classId);
+  return eligibleGroupsCore(equipment, FORBIDDEN_GROUP_BY_CLASS[id] || []);
+}
+
+// The weapon categories a class may choose under the multiclass table. Same
+// eligible set as eligibleGroups but keyed on the multiclass restrictions.
+function multiclassEligibleGroups(classId, equipment) {
+  const id = normalizeClass(classId);
+  return eligibleGroupsCore(equipment, MULTICLASS_FORBIDDEN_GROUP_BY_CLASS[id] || []);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,8 +416,7 @@ function armorTypeOf(entry) {
   return ARMOR_TYPE_BY_NAME[entry.name];
 }
 
-function addArmorGrants(grants, classId, equipment) {
-  const config = ARMOR_GRANT_BY_CLASS[classId];
+function addArmorGrantsForConfig(grants, equipment, config) {
   if (!config) return;
   const index = indexEquipment(equipment);
   const allowed = new Set(config.armor);
@@ -376,6 +433,14 @@ function addArmorGrants(grants, classId, equipment) {
       if (!hasProperty(entry, 'Clockwork')) addItem(grants, entry.id);
     }
   }
+}
+
+function addArmorGrants(grants, classId, equipment) {
+  addArmorGrantsForConfig(grants, equipment, ARMOR_GRANT_BY_CLASS[classId]);
+}
+
+function addMulticlassArmorGrants(grants, classId, equipment) {
+  addArmorGrantsForConfig(grants, equipment, MULTICLASS_ARMOR_GRANT_BY_CLASS[classId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +471,99 @@ export function classGrants(classId, equipment, chosenGroups = [], options = {})
   }
 
   addArmorGrants(grants, id, equipment);
+
+  return grants;
+}
+
+// ---------------------------------------------------------------------------
+// multiclassGrants
+// ---------------------------------------------------------------------------
+
+function validateMulticlassChoices(classId, equipment, chosenGroups) {
+  const eligible = new Set(multiclassEligibleGroups(classId, equipment));
+  const seen = new Set();
+  for (const group of chosenGroups) {
+    if (seen.has(group)) {
+      throw new Error(`Duplicate category for ${classId}: ${group}`);
+    }
+    seen.add(group);
+    if (!eligible.has(group)) {
+      throw new Error(`Unknown or forbidden category for ${classId}: ${group}`);
+    }
+  }
+}
+
+function addMulticlassCategoryWeapons(grants, classId, equipment, chosenGroups) {
+  const index = indexEquipment(equipment);
+  const excludedProperty = MULTICLASS_EXCLUDED_PROPERTY_BY_CLASS[classId] || null;
+  for (const group of chosenGroups) {
+    if (excludedProperty) {
+      // Per-item enumeration so an excluded item never slips in by group grant.
+      addGroupAsItems(grants, index, group, { excludeProperty: excludedProperty });
+    } else {
+      addGroup(grants, group);
+    }
+  }
+}
+
+function addMulticlassFixedWeaponGrants(grants, classId, equipment) {
+  switch (classId) {
+    case 'monk':
+      // Simple weapons, shortswords.
+      addSimpleWeapons(grants, equipment);
+      addItem(grants, 'dueling-blades/shortsword');
+      break;
+
+    case 'warlock':
+      // Simple weapons.
+      addSimpleWeapons(grants, equipment);
+      break;
+
+    case 'artificer':
+    case 'bard':
+    case 'cleric':
+    case 'druid':
+    case 'rogue':
+    case 'sorcerer':
+    case 'wizard':
+      // No weapon grants.
+      break;
+  }
+}
+
+// Build the pure RME multiclass basic-training grants, distinct from the
+// starting classGrants above.
+//
+//   - `classId` is lower-case (`CLASS_IDS` member); an unknown class throws.
+//   - `chosenGroups` is only used by barbarian/fighter/paladin/ranger. When it
+//     is provided (non-empty) it must name exactly 4 eligible weapon groups and
+//     reject duplicates and forbidden groups. When it is left empty (default
+//     []) the fixed grants for those classes are still returned and the caller
+//     reports the 4-group choice gap.
+//   - For every other class `chosenGroups` is ignored.
+//
+// Returns `{ groups, items }` of 'proficient' grants. It never mutates inputs.
+export function multiclassGrants(classId, equipment, chosenGroups = []) {
+  const id = normalizeClass(classId);
+
+  const grants = { groups: {}, items: {} };
+
+  if (MULTICLASS_CATEGORY_CHOICE_CLASSES.has(id)) {
+    addSimpleWeapons(grants, equipment);
+    if (chosenGroups.length > 0) {
+      if (chosenGroups.length !== 4) {
+        throw new Error(
+          `Multiclass category choice requires exactly 4 categories for ${id}; got ${chosenGroups.length}`
+        );
+      }
+      validateMulticlassChoices(id, equipment, chosenGroups);
+      addMulticlassCategoryWeapons(grants, id, equipment, chosenGroups);
+    }
+  } else {
+    addMulticlassFixedWeaponGrants(grants, id, equipment);
+  }
+
+  addMulticlassArmorGrants(grants, id, equipment);
 
   return grants;
 }

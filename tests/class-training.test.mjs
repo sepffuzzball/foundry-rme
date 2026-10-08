@@ -8,6 +8,7 @@ import {
   CLASS_IDS,
   eligibleGroups,
   classGrants,
+  multiclassGrants,
 } from '../src/class-training.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +20,10 @@ const byId = new Map(equipment.map((e) => [e.id, e]));
 
 function grants(id, chosenGroups, options) {
   return classGrants(id, equipment, chosenGroups || [], options);
+}
+
+function mg(id, chosenGroups) {
+  return multiclassGrants(id, equipment, chosenGroups || []);
 }
 
 function hasItem(g, id) {
@@ -475,4 +480,189 @@ test('classGrants: monk, sorcerer and wizard get no armor or shields', () => {
     assert.equal(itemIds(g, 'armor').length, 0, `${id}: armor`);
     assert.equal(itemIds(g, 'shield').length, 0, `${id}: shields`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Multiclass basic training (rules/ClassTraining.md "Multiclass Basic Training")
+// ---------------------------------------------------------------------------
+
+test('multiclassGrants: all 13 classes produce their multiclass grants', () => {
+  // Artificer: light+medium armor, all shields, no weapons.
+  {
+    const g = mg('artificer');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 0);
+    assert.equal(itemIds(g, 'armor').length, 8);
+    assert.equal(itemIds(g, 'shield').length, 8);
+    assert.ok(hasItem(g, 'shields/diskarmor'));
+    assert.ok(!hasItem(g, 'armor/plate'));
+  }
+  // Barbarian: shields + all simple weapons, no armor.
+  {
+    const g = mg('barbarian');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 52);
+    assert.equal(itemIds(g, 'armor').length, 0);
+    assert.equal(itemIds(g, 'shield').length, 8);
+  }
+  // Bard: light armor only.
+  {
+    const g = mg('bard');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 0);
+    assert.equal(itemIds(g, 'armor').length, 4);
+    assert.equal(itemIds(g, 'shield').length, 0);
+  }
+  // Cleric: light+medium armor, all shields, no weapons.
+  {
+    const g = mg('cleric');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 0);
+    assert.equal(itemIds(g, 'armor').length, 8);
+    assert.equal(itemIds(g, 'shield').length, 8);
+  }
+  // Druid: light+medium armor, all shields, no weapons.
+  {
+    const g = mg('druid');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 0);
+    assert.equal(itemIds(g, 'armor').length, 8);
+    assert.equal(itemIds(g, 'shield').length, 8);
+  }
+  // Monk: simple weapons + shortsword, no armor or shields.
+  {
+    const g = mg('monk');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 52);
+    assert.ok(hasItem(g, 'dueling-blades/shortsword'));
+    assert.equal(itemIds(g, 'armor').length, 0);
+    assert.equal(itemIds(g, 'shield').length, 0);
+  }
+  // Rogue: light armor only.
+  {
+    const g = mg('rogue');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 0);
+    assert.equal(itemIds(g, 'armor').length, 4);
+    assert.equal(itemIds(g, 'shield').length, 0);
+  }
+  // Sorcerer: nothing.
+  {
+    const g = mg('sorcerer');
+    assert.deepEqual(g, { groups: {}, items: {} });
+  }
+  // Warlock: light armor + simple weapons, no shields.
+  {
+    const g = mg('warlock');
+    assert.deepEqual(g.groups, {});
+    assert.equal(itemIds(g, 'weapon').length, 52);
+    assert.equal(itemIds(g, 'armor').length, 4);
+    assert.equal(itemIds(g, 'shield').length, 0);
+  }
+  // Wizard: nothing.
+  {
+    const g = mg('wizard');
+    assert.deepEqual(g, { groups: {}, items: {} });
+  }
+});
+
+const M_FOUR = ['Axes', 'Bows', 'Combat Blades', 'Dueling Blades'];
+
+test('multiclassGrants: fighter grants the 4 chosen categories as group grants and no heavy armor', () => {
+  const g = mg('fighter', M_FOUR);
+  assert.deepEqual(g.groups, {
+    Axes: 'proficient',
+    Bows: 'proficient',
+    'Combat Blades': 'proficient',
+    'Dueling Blades': 'proficient',
+  });
+  // Fighter multiclass takes light+medium armor only, never heavy.
+  assert.equal(itemIds(g, 'armor').length, 8);
+  assert.ok(!hasItem(g, 'armor/plate'));
+  assert.ok(!hasItem(g, 'armor/hauberk'));
+  // Chosen categories are group grants, so no martial items are enumerated.
+  assert.equal(itemIds(g, 'weapon').length, 52);
+});
+
+test('multiclassGrants: paladin forbids Firearms/Throwing/Whips and grants no heavy armor', () => {
+  const g = mg('paladin', M_FOUR);
+  assert.deepEqual(g.groups, {
+    Axes: 'proficient',
+    Bows: 'proficient',
+    'Combat Blades': 'proficient',
+    'Dueling Blades': 'proficient',
+  });
+  assert.equal(itemIds(g, 'armor').length, 8);
+  assert.ok(!hasItem(g, 'armor/plate'));
+  // Whips is forbidden for paladin multiclass (unlike the single-class grants).
+  assert.throws(() => mg('paladin', ['Whips', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  assert.throws(() => mg('paladin', ['Firearms', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  assert.throws(() => mg('paladin', ['Throwing Weapons', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+});
+
+test('multiclassGrants: barbarian excludes Clockwork weapons per-item within a chosen category', () => {
+  const g = mg('barbarian', ['Ambush Weapons', 'Axes', 'Bows', 'Combat Blades']);
+  // Per-item enumeration: no group grants, Clockwork items are cut.
+  assert.deepEqual(g.groups, {});
+  assert.ok(hasItem(g, 'bows/shortbow'));
+  assert.ok(!hasItem(g, 'bows/collapsible-bow'));
+  assert.ok(!hasItem(g, 'bows/compound-bow'));
+  assert.ok(hasItem(g, 'axes/battle-axe'));
+});
+
+test('multiclassGrants: ranger excludes Clockwork per-item and forbids Polearms/Flails', () => {
+  const g = mg('ranger', ['Ambush Weapons', 'Axes', 'Bows', 'Crossbows']);
+  assert.deepEqual(g.groups, {});
+  assert.ok(hasItem(g, 'bows/recurve'));
+  assert.ok(!hasItem(g, 'bows/collapsible-bow'));
+  assert.ok(!hasItem(g, 'bows/compound-bow'));
+  assert.ok(hasItem(g, 'crossbows/light-crossbow'));
+  assert.ok(!hasItem(g, 'crossbows/grapple-crossbow'));
+  assert.equal(itemIds(g, 'armor').length, 8);
+  assert.ok(!hasItem(g, 'armor/plate'));
+  assert.throws(() => mg('ranger', ['Polearms', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  assert.throws(() => mg('ranger', ['Flails', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+});
+
+test('multiclassGrants: category-choice classes require exactly 4 chosen categories when provided', () => {
+  for (const id of ['barbarian', 'fighter', 'paladin', 'ranger']) {
+    assert.throws(() => mg(id, ['Axes', 'Bows']), /exactly 4/);
+    assert.throws(() => mg(id, ['Axes', 'Bows', 'Combat Blades', 'Dueling Blades', 'Flails']), /exactly 4/);
+  }
+  const g = mg('fighter', M_FOUR);
+  assert.deepEqual(Object.keys(g.groups).sort(), [...M_FOUR].sort());
+});
+
+test('multiclassGrants: rejects duplicate and unknown or forbidden multiclass categories', () => {
+  assert.throws(() => mg('fighter', ['Axes', 'Axes', 'Bows', 'Combat Blades']), /Duplicate category/);
+  assert.throws(() => mg('fighter', ['Axes', 'Bows', 'Swords', 'Dueling Blades']), /Unknown or forbidden/);
+  // Barbarian forbids Firearms and Crossbows.
+  assert.throws(() => mg('barbarian', ['Firearms', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  assert.throws(() => mg('barbarian', ['Crossbows', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  // Paladin forbids Whips.
+  assert.throws(() => mg('paladin', ['Whips', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  // Ranger forbids Polearms and Flails.
+  assert.throws(() => mg('ranger', ['Polearms', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+  assert.throws(() => mg('ranger', ['Flails', 'Axes', 'Bows', 'Combat Blades']), /Unknown or forbidden/);
+});
+
+test('multiclassGrants: an empty group choice returns the fixed grants for category classes', () => {
+  const g = mg('fighter', []);
+  assert.deepEqual(g.groups, {});
+  // The fixed multiclass grants (simple weapons, armor, shields) are still present.
+  assert.equal(itemIds(g, 'weapon').length, 52);
+  assert.equal(itemIds(g, 'armor').length, 8);
+  assert.equal(itemIds(g, 'shield').length, 8);
+});
+
+test('multiclassGrants: an unknown class throws', () => {
+  assert.throws(() => mg('bardz'), /Unknown class/);
+});
+
+test('multiclassGrants: does not mutate its inputs', () => {
+  const chosen = Object.freeze([...M_FOUR]);
+  const before = mg('fighter', chosen);
+  const deep = JSON.parse(JSON.stringify(before));
+  mg('fighter', chosen);
+  assert.deepEqual(mg('fighter', chosen), deep);
 });

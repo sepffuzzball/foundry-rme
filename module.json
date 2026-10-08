@@ -5,6 +5,11 @@
   "version": "0.1.0",
   "compatibility": { "minimum": "14.367", "verified": "14.368" },
   "relationships": { "systems": [{ "id": "dnd5e", "type": "system", "compatibility": { "minimum": "6.0.6" } }] },
+  "packs": [
+    { "name": "weapons", "label": "RME Weapons", "system": "dnd5e", "path": "packs/weapons", "type": "Item" },
+    { "name": "armor", "label": "RME Armor", "system": "dnd5e", "path": "packs/armor", "type": "Item" },
+    { "name": "shields", "label": "RME Shields", "system": "dnd5e", "path": "packs/shields", "type": "Item" }
+  ],
   "esmodules": ["src/main.mjs"],
   "styles": ["styles/rme.css"]
 }

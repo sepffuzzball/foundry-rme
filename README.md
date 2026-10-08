@@ -31,6 +31,8 @@ The repository is public, so Foundry can fetch the manifest and the release ZIP
 directly from GitHub. Updates are delivered through Foundry's own **Update
 modules** flow: when a new release is published, the manifest URL points to the
 newest release, and the **Update** button in the module manager applies it.
+After a new release, update the module through that flow, and back up your world
+before applying the update.
 
 Note for installs copied by hand: if you previously installed the module by
 copying the `foundry-rme` folder into `Data/modules`, that install is not tied to
@@ -42,19 +44,48 @@ the world generally remain. Still, back up your world before switching, and
 reinstall the module before opening the world again so no referenced content is
 missing.
 
+## Compendium packs
+
+Every release ships three precompiled Foundry compendium packs, so they are
+available the moment the module is installed - no build step and no catalog
+import is required:
+
+- **RME Weapons** (153 items, including natural weapons)
+- **RME Armor** (12 items)
+- **RME Shields** (8 items)
+
+Open any of these from Foundry's **Compendium** tab. Drag an item onto a
+character sheet (or use the pack's import action) and it opens the native dnd5e
+item sheet with the RME catalog data already filled in. The packs are LevelDB
+directories compiled by `npm run build:packs` and embedded in the release
+archive, so installing the module never requires you to compile them yourself.
+
+The GM-only **RME Catalog** button remains optional. It imports selected entries
+or the full catalog into the world, and can target an owned actor. If you
+prefer, you can ignore it entirely and rely solely on the bundled compendium
+packs.
+
 ## Local development and install
 
 Add the module folder to `Data/modules/foundry-rme` and enable it in the world.
 
 For development, symlink (or copy) this repository into `Data/modules/foundry-rme` so Foundry loads the module straight from your working copy. A symlink works on Linux and macOS; on Windows you may need to copy the folder instead of linking if Foundry does not resolve the link.
 
-After any change to `rules/`, rebuild the generated catalog:
+Before using a local checkout with Foundry, install the dependencies and build
+the catalog and compendium packs from your working copy:
 
 ```
+npm ci
 npm run build:catalog
+npm run build:packs
 ```
 
-Run the test suite with:
+`npm ci` installs the pinned build tooling from the lockfile; `npm run
+build:catalog` regenerates `data/catalog.json` from `rules/`, and `npm run
+build:packs` compiles the three compendium packs (the release ships them
+precompiled, but a local checkout does not). Re-run `npm run build:catalog`
+after any change to `rules/`, and `npm run build:packs` after any change to the
+pack definitions. Run the test suite with:
 
 ```
 npm test
@@ -64,17 +95,81 @@ npm test
 
 GMs can open the catalog from an actor sheet's **RME Catalog** header control; they can import selected entries or the full catalog into the world, or select an owned actor to receive selected entries. Existing catalog Items are detected by `flags.foundry-rme.catalogId` and never overwritten. The `game.rme.openCatalog()` and `game.rme.importCatalog({actor})` APIs remain available.
 
-Owned actor sheets receive an **RME Training** header control. `game.rme.openTraining(actor?)` also opens the training editor: it uses the supplied owned actor when one is given, otherwise the controlled token actor or your character. Group training and explicit per-item overrides are stored on the actor; choosing Untrained is an explicit override, while Inherit uses the group/default resolution. `game.rme.syncActorItems(actor, catalog.equipment, training)` synchronizes supported module-owned fields.
+Owned actor sheets receive an **RME Training** header control, and
+`game.rme.openTraining(actor?)` opens the same editor (it uses the supplied
+owned actor when one is given, otherwise the controlled token actor or your
+character). Dropping a class, race, feat, or subclass Item onto an actor - or
+changing one that is already there - triggers an automatic training sync that
+derives the actor's RME weapon/armor training and synchronizes the actor's
+catalog Items to the result. Derivation does not run the native dnd5e class
+advancement; it follows source-specific rules.
 
-The training dialog also offers optional starting-class training seeding. Choose a class and apply its basic grants; fighter, barbarian, paladin, and ranger require exactly eight eligible weapon categories. This only fills group/item controls that still inherit or are blank, so existing explicit overrides are preserved. Review and save with **Save training** to persist and synchronize. This is a single-class starting-training aid: the monk weapon table is missing, and multiclass, species, and feat training must be handled manually. Selecting a class alone never changes training.
+- **Classes** are resolved through the RME ClassTraining table
+  (included as `rules/ClassTraining.md`), not just their Trait advancements. A
+  recognized class identifier drives the class's weapon-category and
+  armor/shield grants: an original-class Fighter prompts for its 8
+  weapon-category choices, while a multiclass Fighter prompts for a 4-category
+  choice (barbarian, paladin, and ranger follow the same original/multiclass
+  split). Any explicit Trait advancement grant on the class Item - for example a
+  Trait granting a specific weapon - is also read and merged into the same
+  source.
+
+- **Race, feat, and subclass** Items are read through their Trait advancements.
+  A Dwarf race Item whose Trait advancement grants `weapon:battle-axe` confers
+  axe training, and a feat Item named "Axe expert" grants the axe group it
+  names, with the chosen items prompted rather than guessed. A feat or subclass
+  Item that matches a known expert/subclass name is handled by the module's own
+  tables instead, which is why an unrecognized expert feat surfaces as a gap.
+
+Manual group/item overrides always take precedence over the derived value; the
+dialog shows each item's origin (manual override, derived source, or natural
+default) so a manual choice is never mistaken for an automatic one. Choosing
+Untrained is an explicit override, while Inherit removes the override.
+Original-class and multiclass weapon-category choices (8 and 4, respectively)
+and expert/subclass item choices are prompted in the RME Training dialog rather
+than guessed, and these source-linked choices are saved against the provider
+that granted them.
+
+Gaps are reported only for something the module can see on an embedded
+supported source but cannot map safely: an unsupported class identifier, an
+unrecognized feat, or an unknown weapon/armor trait key. A grant the module
+cannot see - one not represented by an embedded class/race/feat/subclass Item or
+a Trait advancement on such an Item, such as a proficiency a DM applied by hand -
+is invisible to derivation, so it is never surfaced as a gap. Those grants must
+be added as manual group/item overrides in the dialog. RME never guesses
+silently: what it sees and cannot map is surfaced for manual review. Save
+persists both training and provider-keyed choices and synchronizes supported
+module-owned fields.
 
 The catalog view contains all 173 equipment entries and 24 reference sections. Source markdown is displayed as escaped preformatted text, not interpreted HTML.
 
 ## Automation limitations
 
-Automation is intentionally limited: only unambiguous base damage and training bonus sync. Starting-class training seeding is opt-in; multiclass, ancestry, feats, and tactical effects remain manual.
+Automation is intentionally limited. The module synchronizes only the training
+level and, for a weapon or natural weapon, only unambiguous single `Melee NdX` /
+`Ranged NdX(+N)` base damage (range is set only for a sole ranged profile; a tier
+with no single parseable profile is left for you to fill in). RME's tactical
+properties (Hipshot, Keen, Puncture, and so on) are not mapped into dnd5e native
+properties, and the fighting-style and spell/ability rule texts remain reference
+material - all of that stays manual.
 
-The module has **not yet been tested in a live Foundry world**. The automated test suite exercises the pure logic and the runtime API surface, but real Foundry/dnd5e rendering and actor interactions are not covered by it.
+Training derivation is automatic for class, race, feat, and subclass sources
+the module recognizes. It is driven by source-specific rules rather than the
+native dnd5e class advancement: recognized classes are resolved through the RME
+ClassTraining table, and race/feat/subclass Items contribute their Trait
+advancement grants. Anything it can see but cannot map is surfaced as a gap
+rather than guessed - unsupported custom classes, unrecognized expert feats, and
+unknown weapon/armor trait keys - while original-class / multiclass / expert
+choices are prompted in the RME Training dialog. A grant that is not represented
+by an embedded class/race/feat/subclass Item or a Trait advancement is invisible
+to derivation, so it is not a gap; add it as a manual group/item override. There
+is no starting-class seeding to enable - the choices are prompted directly.
+
+The current release has **not yet been verified by the developer in a live
+Foundry world**. The automated test suite exercises the pure logic and the
+runtime API surface, but real Foundry/dnd5e rendering and actor interactions are
+not covered by it. A user report indicates the module was installed and ran
+under a prior release, but this release remains unverified.
 
 ## Repository contents
 
@@ -117,7 +212,10 @@ Each release provides two assets:
 - `module.json` - the manifest Foundry polls for update checks. It is published
   at the `latest` download URL and always reflects the newest release.
 - `foundry-rme.zip` - the installable module archive, with `module.json` at the
-  archive root (not under a `package/` folder) as Foundry requires.
+  archive root (not under a `package/` folder) as Foundry requires. It embeds the
+  three precompiled compendium packs (`packs/weapons`, `packs/armor`,
+  `packs/shields`) as LevelDB directories, so they are usable immediately on
+  install.
 
 The tracked `module.json` in the repository is never modified by the release
 process; the `manifest` and `download` fields are stamped only into the staged

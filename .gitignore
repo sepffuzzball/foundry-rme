@@ -5,6 +5,10 @@ node_modules/
 coverage/
 dist/
 
+# Generated compendium packs and their JSON sources (release builds them)
+packs/
+packs-src/
+
 # Logs
 *.log
 

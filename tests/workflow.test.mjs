@@ -64,6 +64,20 @@ test('workflow runs the test suite before packaging', () => {
   assert.ok(text.includes('npm test'), 'must run the test suite');
 });
 
+test('workflow compiles the compendium packs before packaging', () => {
+  const text = workflowText();
+  assert.ok(text.includes('npm run build:packs'), 'must build the compendium packs');
+
+  const packsStep = text.indexOf('npm run build:packs');
+  const packageStep = text.indexOf('npm run package:release');
+  assert.ok(packsStep !== -1, 'build:packs step must be present');
+  assert.ok(packageStep !== -1, 'package:release step must be present');
+  assert.ok(
+    packsStep < packageStep,
+    'build:packs must run before package:release'
+  );
+});
+
 test('workflow packages the release with the run number and repository', () => {
   const text = workflowText();
   assert.ok(
@@ -74,7 +88,7 @@ test('workflow packages the release with the run number and repository', () => {
   );
 });
 
-test('workflow verifies the archive root and manifest via unzip', () => {
+test('workflow verifies the archive root, catalog, and compendium packs via unzip', () => {
   const text = workflowText();
   assert.ok(text.includes('unzip'), 'must invoke unzip to list the archive');
   assert.ok(text.includes("'-Z'") && text.includes("'-1'"), 'must use unzip -Z -1');
@@ -85,6 +99,19 @@ test('workflow verifies the archive root and manifest via unzip', () => {
   assert.ok(
     text.includes("assert.ok(listing.includes('data/catalog.json')"),
     'must assert data/catalog.json is archived'
+  );
+  // The archived compendium packs and their LevelDB records must be verified.
+  assert.ok(
+    text.includes("['weapons', 'armor', 'shields']"),
+    'must iterate the three compiled packs'
+  );
+  assert.ok(
+    text.includes('listing.includes(`${prefix}CURRENT`)'),
+    'must assert the pack CURRENT marker is archived'
+  );
+  assert.ok(
+    text.includes("listing.some((l) => l.startsWith(prefix) && l.endsWith('.ldb'))"),
+    'must assert a LevelDB .ldb file is archived'
   );
 });
 

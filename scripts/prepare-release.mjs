@@ -5,11 +5,12 @@
 // release without modifying the tracked module.json.
 //
 // Interface:
-//   npm run package:release -- --run-number N --repository OWNER/REPO [--out-dir DIR]
+//   npm run package:release -- --run-number N --repository OWNER/REPO [--out-dir DIR] [--root DIR]
 //
 // Behavior:
 //   - Validates that N is a positive integer and that OWNER/REPO is a valid
-//     owner/repo slug.
+//     owner/repo slug. `--root` overrides the project root (defaults to the
+//     repository root) so an isolated fixture can be packaged in tests.
 //   - Reads the tracked module.json and requires its `version` to be strict
 //     major.minor.patch.
 //   - Computes the release version as major.minor.(patch + N), tag `v<version>`.
@@ -18,6 +19,9 @@
 //       OUT_DIR/package/src/
 //       OUT_DIR/package/styles/
 //       OUT_DIR/package/data/catalog.json
+//       OUT_DIR/package/packs/weapons/
+//       OUT_DIR/package/packs/armor/
+//       OUT_DIR/package/packs/shields/
 //     The staged manifest is identical to the source except for `version` and
 //     the release `manifest`/`download` URLs.
 //   - Copies the staged manifest to OUT_DIR/module.json.
@@ -25,7 +29,10 @@
 //     root (not under a package/ folder), using the external `zip` executable.
 //   - Writes OUT_DIR/release.json { tag, version, repository }.
 //
-// Only the four payload entries above are archived, so .git/, rules/,
+// The three precompiled RME compendium packs are required inputs: each pack
+// path must exist and be a compiled LevelDB directory (a CURRENT marker and/or
+// .ldb data files), and module.json must declare all three. Only the module
+// payload plus the compiled packs are archived, so .git/, rules/,
 // graphify-out/, tests/, and any local secrets are excluded by construction.
 
 import {
@@ -45,12 +52,26 @@ import { execFileSync } from 'node:child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-const MODULE_JSON = join(ROOT, 'module.json');
-const SRC_DIR = join(ROOT, 'src');
-const STYLES_DIR = join(ROOT, 'styles');
-const CATALOG_JSON = join(ROOT, 'data', 'catalog.json');
+// The three precompiled compendium packs shipped in every release. `name` is
+// both the pack directory and the module.json pack name; the path is explicit
+// so a future rename cannot silently ship a different layout.
+const PACKS = [
+  { name: 'weapons', path: 'packs/weapons' },
+  { name: 'armor', path: 'packs/armor' },
+  { name: 'shields', path: 'packs/shields' },
+];
 
 const ZIP_NAME = 'foundry-rme.zip';
+
+function pathsFor(projectRoot) {
+  return {
+    moduleJson: join(projectRoot, 'module.json'),
+    srcDir: join(projectRoot, 'src'),
+    stylesDir: join(projectRoot, 'styles'),
+    catalogJson: join(projectRoot, 'data', 'catalog.json'),
+    packsDir: join(projectRoot, 'packs'),
+  };
+}
 
 // A GitHub owner/name slug: starts and ends alphanumeric, middle may contain
 // alphanumerics, hyphens, underscores, and dots. No empty leading/trailing
@@ -63,7 +84,7 @@ function fail(message) {
 
 function usage() {
   return (
-    'usage: npm run package:release -- --run-number N --repository OWNER/REPO [--out-dir DIR]'
+    'usage: npm run package:release -- --run-number N --repository OWNER/REPO [--out-dir DIR] [--root DIR]'
   );
 }
 
@@ -120,14 +141,14 @@ function assertFile(path, label) {
   }
 }
 
-function validateCatalog() {
-  if (!existsSync(CATALOG_JSON)) {
+function validateCatalog(paths) {
+  if (!existsSync(paths.catalogJson)) {
     fail('data/catalog.json is missing; run `npm run build:catalog` first');
   }
-  assertFile(CATALOG_JSON, 'data/catalog.json');
+  assertFile(paths.catalogJson, 'data/catalog.json');
   let catalog;
   try {
-    catalog = JSON.parse(readFileSync(CATALOG_JSON, 'utf8'));
+    catalog = JSON.parse(readFileSync(paths.catalogJson, 'utf8'));
   } catch {
     fail('data/catalog.json is not valid JSON; run `npm run build:catalog`');
   }
@@ -138,6 +159,37 @@ function validateCatalog() {
     !Array.isArray(catalog.references)
   ) {
     fail('data/catalog.json does not look like a built catalog; run `npm run build:catalog`');
+  }
+}
+
+// A compiled Foundry compendium pack is a LevelDB directory. The reliable
+// markers are the CURRENT file (the LevelDB manifest pointer) and/or the .ldb
+// data files. Require at least one of them so an empty or half-built directory
+// cannot be packaged as a valid pack.
+function assertLevelDBDir(path, label) {
+  assertDir(path, label);
+  const entries = readdirSync(path);
+  const hasCurrent = entries.includes('CURRENT');
+  const hasLdb = entries.some((entry) => entry.endsWith('.ldb'));
+  if (!hasCurrent && !hasLdb) {
+    fail(
+      `${label} is not a compiled LevelDB pack (no CURRENT or .ldb file found): ${path}`
+    );
+  }
+}
+
+// The module payload must include every pack we archive. This guards against a
+// manifest/path mismatch slipping through to an installable release.
+function validatePackManifest(sourceManifest) {
+  const declared = new Set(
+    (Array.isArray(sourceManifest.packs) ? sourceManifest.packs : []).map(
+      (p) => p.path
+    )
+  );
+  for (const pack of PACKS) {
+    if (!declared.has(pack.path)) {
+      fail(`module.json must declare a pack at ${pack.path}`);
+    }
   }
 }
 
@@ -172,6 +224,7 @@ function parseArgs(argv) {
       case '--run-number':
       case '--repository':
       case '--out-dir':
+      case '--root':
         value = inlineValue !== undefined ? inlineValue : argv[++i];
         if (value === undefined) {
           fail(`${name} requires a value\n${usage()}`);
@@ -184,6 +237,7 @@ function parseArgs(argv) {
     if (name === '--run-number') args.runNumber = value;
     else if (name === '--repository') args.repository = value;
     else if (name === '--out-dir') args.outDir = value;
+    else if (name === '--root') args.root = value;
   }
   return args;
 }
@@ -205,11 +259,18 @@ function main() {
   const runNumber = parseRunNumber(args.runNumber);
   const repository = parseRepository(args.repository);
 
+  // `--root` lets an isolated fixture be packaged (tests); it defaults to the
+  // repository root so normal releases are unchanged.
+  const projectRoot = args.root
+    ? resolve(process.cwd(), args.root)
+    : ROOT;
+  const paths = pathsFor(projectRoot);
+
   // Source manifest must exist and be strict semver before we derive anything.
-  assertFile(MODULE_JSON, 'module.json');
+  assertFile(paths.moduleJson, 'module.json');
   let sourceManifest;
   try {
-    sourceManifest = JSON.parse(readFileSync(MODULE_JSON, 'utf8'));
+    sourceManifest = JSON.parse(readFileSync(paths.moduleJson, 'utf8'));
   } catch {
     fail('module.json is not valid JSON');
   }
@@ -221,14 +282,23 @@ function main() {
   const manifestUrl = `https://github.com/${repository}/releases/latest/download/module.json`;
   const downloadUrl = `https://github.com/${repository}/releases/download/${tag}/${ZIP_NAME}`;
 
-  // The packaged data must reflect a built catalog.
-  assertDir(SRC_DIR, 'src');
-  assertDir(STYLES_DIR, 'styles');
-  validateCatalog();
+  // The packaged data must reflect a built catalog and a manifest that declares
+  // (and is consistent with) the compiled packs we are about to ship.
+  assertDir(paths.srcDir, 'src');
+  assertDir(paths.stylesDir, 'styles');
+  validateCatalog(paths);
+  validatePackManifest(sourceManifest);
+
+  // Every pack must exist and be an actual compiled LevelDB directory. This
+  // enforces the `npm run build:packs` prerequisite at the packaging gate so a
+  // release can never silently omit the compendium packs.
+  for (const pack of PACKS) {
+    assertLevelDBDir(join(paths.packsDir, pack.name), pack.path);
+  }
 
   const outDir = args.outDir
     ? resolve(process.cwd(), args.outDir)
-    : join(ROOT, 'dist');
+    : join(projectRoot, 'dist');
   const packageDir = join(outDir, 'package');
   const stagedManifest = join(packageDir, 'module.json');
   const distManifest = join(outDir, 'module.json');
@@ -255,20 +325,31 @@ function main() {
     'utf8'
   );
 
-  copyDirRecursive(SRC_DIR, join(packageDir, 'src'));
-  copyDirRecursive(STYLES_DIR, join(packageDir, 'styles'));
+  copyDirRecursive(paths.srcDir, join(packageDir, 'src'));
+  copyDirRecursive(paths.stylesDir, join(packageDir, 'styles'));
   mkdirSync(join(packageDir, 'data'), { recursive: true });
-  copyFileSync(CATALOG_JSON, join(packageDir, 'data', 'catalog.json'));
+  copyFileSync(paths.catalogJson, join(packageDir, 'data', 'catalog.json'));
+
+  // Stage the compiled compendium packs under package/packs/<name> so they are
+  // archived alongside the rest of the module payload.
+  mkdirSync(join(packageDir, 'packs'), { recursive: true });
+  for (const pack of PACKS) {
+    copyDirRecursive(
+      join(paths.packsDir, pack.name),
+      join(packageDir, 'packs', pack.name)
+    );
+  }
 
   // Provide the standalone manifest alongside the package staging area.
   copyFileSync(stagedManifest, distManifest);
 
   // Archive from the package dir so module.json lands at the archive root,
-  // not under a package/ folder. Only the module payload is zipped.
+  // not under a package/ folder. Only the module payload and compiled packs
+  // are zipped.
   try {
     execFileSync(
       'zip',
-      ['-r', zipPath, 'module.json', 'src', 'styles', 'data'],
+      ['-r', zipPath, 'module.json', 'src', 'styles', 'data', 'packs'],
       {
         cwd: packageDir,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -297,7 +378,7 @@ function main() {
   console.log(`release.json:       ${releasePath}`);
   console.log(`release version:    ${releaseVersion} (tag ${tag})`);
   console.log(`repository:         ${repository}`);
-  console.log('archive contents (module.json at root, src, styles, data/catalog.json):');
+  console.log('archive contents (module.json at root, src, styles, data/catalog.json, packs/{weapons,armor,shields}):');
   execFileSync('zip', ['-sf', zipPath], {
     stdio: 'inherit',
   });

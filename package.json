@@ -5,6 +5,10 @@
   "scripts": {
     "test": "node --test",
     "build:catalog": "node scripts/build-catalog.mjs",
+    "build:packs": "node scripts/build-packs.mjs",
     "package:release": "node scripts/prepare-release.mjs"
+  },
+  "devDependencies": {
+    "@foundryvtt/foundryvtt-cli": "3.0.4"
   }
 }
