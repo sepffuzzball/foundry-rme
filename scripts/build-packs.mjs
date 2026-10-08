@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // build-packs.mjs
 //
-// Deterministically compiles the RME catalog into three Foundry dnd5e Item
-// compendium packs (Weapons, Armor, Shields) as LevelDB directories under
-// packs/. The per-item JSON sources are written under the ignored packs-src/
-// directory and compiled with @foundryvtt/foundryvtt-cli's compilePack.
+// Deterministically compiles the RME catalog into four Foundry dnd5e Item
+// compendium packs (Weapons, Armor, Shields, Ammunition) as LevelDB
+// directories under packs/. The per-item JSON sources are written under the
+// ignored packs-src/ directory and compiled with @foundryvtt/foundryvtt-cli's
+// compilePack.
 //
 // Interface:
 //   npm run build:packs
 //
-// For every catalog entry the script:
+// For the three equipment packs (Weapons, Armor, Shields) the script:
 //   1. Derives a stable 16-character alphanumeric Foundry document id:
 //        _id  = sha256(entry.id).slice(0, 16)  (lowercase hex)
 //        _key = `!items!${_id}`
@@ -19,11 +20,23 @@
 //      not produce it). The value is the slugified item name, matching what the
 //      dnd5e system would derive from the item name.
 //
+// The fourth pack (Ammunition) is compiled from data/ammunition.json rather
+// than the equipment catalog. Each entry is a stack of consumable ammunition:
+//   _id  = sha256(`ammo/${entry.id}`).slice(0, 16)  (lowercase hex)
+//   _key = `!items!${_id}`
+// It carries the dnd5e consumable fields explicitly (type 'consumable',
+// system.type {value:'ammo', subtype:'rme-<family>'}, system.quantity, a zero
+// weight, and a per-unit price so a full stack matches the user-specified
+// stack cost). No tactical effects are implemented in this step; the
+// foundry-rme flag block records the ammo id, family, stack cost, and the
+// declarative effect metadata.
+//
 // Groups and counts (validated strictly; a mismatch fails the build):
-//   weapons: kind weapon + kind natural       -> 153
-//   armor:   kind armor                       -> 12
-//   shields: kind shield                      -> 8
-//   total:                                    -> 173
+//   weapons:    kind weapon + kind natural -> 153
+//   armor:      kind armor                 -> 12
+//   shields:    kind shield                -> 8
+//   ammunition: data/ammunition.json       -> 25
+//   total:                                 -> 198
 //
 // All entries must be assigned exactly once and must produce unique ids; the
 // build fails loudly rather than silently dropping a record.
@@ -40,14 +53,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
 const TOTAL_EXPECTED = 173;
+const AMMO_EXPECTED = 25;
 
-// The three packs. `kinds` enumerates the catalog `kind` values that belong to
-// each pack; `expected` is the strict count required for each.
+// The three equipment packs. `kinds` enumerates the catalog `kind` values that
+// belong to each pack; `expected` is the strict count required for each.
 const GROUPS = [
   { name: 'weapons', kinds: ['weapon', 'natural'], expected: 153 },
   { name: 'armor', kinds: ['armor'], expected: 12 },
   { name: 'shields', kinds: ['shield'], expected: 8 },
 ];
+
+// The fourth pack is compiled from data/ammunition.json, not the catalog.
+const AMMO_PACK = { name: 'ammunition', expected: AMMO_EXPECTED };
 
 function fail(message) {
   throw new Error(`[build-packs] ${message}`);
@@ -64,6 +81,96 @@ function slugify(str) {
 // derived only from the catalog id so re-runs are byte-for-byte identical.
 function stableId(entryId) {
   return createHash('sha256').update(entryId, 'utf8').digest('hex').slice(0, 16);
+}
+
+// Ammunition document ids are namespaced with `ammo/` so they can never
+// collide with the catalog-derived equipment ids.
+function ammoId(entryId) {
+  return createHash('sha256').update(`ammo/${entryId}`, 'utf8').digest('hex').slice(0, 16);
+}
+
+// Escape HTML so the ammo description renders as literal text (never injected).
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// The ammo description is plain explanatory text wrapped in a <pre> block so it
+// renders literally, matching the equipment pack convention.
+function ammoDescription(text) {
+  return `<pre>${escapeHtml(text)}</pre>`;
+}
+
+// Build one ammunition pack source document from a data/ammunition.json entry.
+// Consumable ammunition carries dnd5e fields explicitly: type 'consumable',
+// system.type {value:'ammo', subtype:'rme-<family>'}, a stack quantity, a zero
+// weight, and a per-unit price (stackCostGp / quantity) so the whole stack
+// matches the user-specified stack cost. No tactical effects are implemented in
+// this step; the flags block records the declarative effect metadata only.
+function ammoDocument(entry) {
+  const id = ammoId(entry.id);
+  const unitPrice = entry.stackCostGp / entry.quantity;
+
+  const doc = {
+    _id: id,
+    _key: `!items!${id}`,
+    name: entry.name,
+    type: 'consumable',
+    system: {
+      type: { value: 'ammo', subtype: `rme-${entry.family}` },
+      quantity: entry.quantity,
+      weight: { value: 0, units: 'lb' },
+      price: { value: unitPrice, denomination: 'gp' },
+      description: { value: ammoDescription(entry.description) },
+    },
+    flags: {
+      'foundry-rme': {
+        ammoId: entry.id,
+        family: entry.family,
+        stackCostGp: entry.stackCostGp,
+        effect: entry.effect,
+      },
+    },
+  };
+
+  // dnd5e items carry system.identifier. The data source does not set it, and
+  // it is required for the item to be considered identified and to participate
+  // in the compendium browser. We only fill it here, never in the source data.
+  if (!doc.system.identifier) {
+    doc.system.identifier = slugify(entry.name);
+  }
+
+  return doc;
+}
+
+// Validate one data/ammunition.json entry has every field the build relies on.
+function validateAmmoEntry(entry, index) {
+  const label = entry?.id || `entry #${index}`;
+  if (typeof entry.id !== 'string' || entry.id.length === 0) {
+    fail(`ammunition entry ${label} must have a non-empty string id`);
+  }
+  if (typeof entry.name !== 'string' || entry.name.length === 0) {
+    fail(`ammunition entry ${label} must have a non-empty string name`);
+  }
+  if (typeof entry.family !== 'string' || entry.family.length === 0) {
+    fail(`ammunition entry ${label} must have a non-empty string family`);
+  }
+  if (typeof entry.stackCostGp !== 'number' || !Number.isFinite(entry.stackCostGp)) {
+    fail(`ammunition entry ${label} must have a numeric stackCostGp`);
+  }
+  if (typeof entry.quantity !== 'number' || entry.quantity <= 0) {
+    fail(`ammunition entry ${label} must have a positive numeric quantity`);
+  }
+  if (typeof entry.description !== 'string' || entry.description.length === 0) {
+    fail(`ammunition entry ${label} must have a non-empty string description`);
+  }
+  if (!entry.effect || typeof entry.effect !== 'object' || typeof entry.effect.text !== 'string' || entry.effect.text.length === 0) {
+    fail(`ammunition entry ${label} must declare an effect object with a non-empty text`);
+  }
 }
 
 // Build one pack source document (JSON-serializable) for a catalog entry.
@@ -91,7 +198,8 @@ function itemDocument(entry) {
   return doc;
 }
 
-// Builds the three compendium packs. Returns a summary for logging/tests.
+// Builds the four compendium packs (Weapons, Armor, Shields, Ammunition).
+// Returns a summary for logging/tests.
 export async function buildPacks({ root = ROOT } = {}) {
   const catalogPath = join(root, 'data', 'catalog.json');
   const packsSrc = join(root, 'packs-src');
@@ -149,7 +257,7 @@ export async function buildPacks({ root = ROOT } = {}) {
     }
   }
 
-  // Rebuild the source tree and compile each pack.
+  // Rebuild the source tree and compile each equipment pack.
   rmSync(packsSrc, { recursive: true, force: true });
   const compiled = [];
   for (const g of groups) {
@@ -170,7 +278,53 @@ export async function buildPacks({ root = ROOT } = {}) {
     compiled.push({ name: g.name, count: g.entries.length, dest: `packs/${g.name}` });
   }
 
-  return { total: seen.size, groups: compiled };
+  // Build the ammunition pack from data/ammunition.json. It is a separate data
+  // source, kept out of the equipment catalog so the 173 equipment count and the
+  // three equipment packs are untouched.
+  const ammoPath = join(root, 'data', 'ammunition.json');
+  let ammoEntries;
+  try {
+    ammoEntries = JSON.parse(readFileSync(ammoPath, 'utf8')).ammunition;
+  } catch {
+    fail('data/ammunition.json is not valid JSON');
+  }
+  if (!Array.isArray(ammoEntries)) {
+    fail('data/ammunition.json must carry an ammunition array');
+  }
+  if (ammoEntries.length !== AMMO_PACK.expected) {
+    fail(`expected ${AMMO_PACK.expected} ammunition entries, got ${ammoEntries.length}`);
+  }
+  ammoEntries.forEach(validateAmmoEntry);
+
+  const ammoSrcDir = join(packsSrc, AMMO_PACK.name);
+  mkdirSync(ammoSrcDir, { recursive: true });
+  const ammoDocs = [];
+  for (const entry of ammoEntries) {
+    const doc = ammoDocument(entry);
+    if (usedIds.has(doc._id)) {
+      fail(`generated duplicate item id ${doc._id} for ${entry.id}`);
+    }
+    usedIds.add(doc._id);
+    writeFileSync(
+      join(ammoSrcDir, `${doc._id}.json`),
+      `${JSON.stringify(doc, null, 2)}\n`,
+      'utf8'
+    );
+    ammoDocs.push(doc);
+  }
+
+  const ammoDest = join(packs, AMMO_PACK.name);
+  rmSync(ammoDest, { recursive: true, force: true });
+  await compilePack(ammoSrcDir, ammoDest, { log: false });
+  compiled.push({
+    name: AMMO_PACK.name,
+    count: ammoDocs.length,
+    dest: `packs/${AMMO_PACK.name}`,
+  });
+
+  // Total is the sum of every pack, equipment and ammunition.
+  const total = compiled.reduce((sum, g) => sum + g.count, 0);
+  return { total, groups: compiled };
 }
 
 const isMain =

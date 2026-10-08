@@ -1,0 +1,353 @@
+{
+  "schemaVersion": 1,
+  "ammunition": [
+    {
+      "id": "crossbow/bolts",
+      "name": "Bolts",
+      "family": "crossbow",
+      "stackCostGp": 1,
+      "quantity": 20,
+      "description": "A standard crossbow bolt. Crossbow bolts are small and usually metal, making them much harder on a critical hit. A crossbow can be stored loaded and primed to shoot, unlike a bow or launch weapon. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A standard crossbow bolt. Deals piercing damage.",
+        "damageType": "piercing"
+      }
+    },
+    {
+      "id": "crossbow/walloping-bolts",
+      "name": "Walloping Bolts",
+      "family": "crossbow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A crossbow bolt crafted to knock a target off its feet. On a hit the target must succeed on a Strength saving throw (DC 10) or be knocked prone. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, the target must succeed on a Strength saving throw (DC 10) or be knocked prone.",
+        "tags": ["knockback"],
+        "trigger": "on-hit",
+        "save": { "ability": "str", "dc": 10 },
+        "condition": "prone"
+      }
+    },
+    {
+      "id": "crossbow/goading-bolts",
+      "name": "Goading Bolts",
+      "family": "crossbow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A crossbow bolt that draws a creature's ire. On a hit the target must succeed on a Wisdom saving throw (DC 13) or have disadvantage on attacks against creatures other than the shooter until the end of the target's next turn. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, the target must succeed on a Wisdom saving throw (DC 13) or have disadvantage on attacks against creatures other than the shooter until the end of the target's next turn.",
+        "tags": ["taunt"],
+        "trigger": "on-hit",
+        "save": { "ability": "wis", "dc": 13 },
+        "condition": "goaded",
+        "duration": "until end of target's next turn"
+      }
+    },
+    {
+      "id": "crossbow/plus-1-bolts",
+      "name": "+1 Bolts",
+      "family": "crossbow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A finely balanced bolt that grants a +1 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +1 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 1,
+        "damageBonus": 1
+      }
+    },
+    {
+      "id": "spinner/bladed-disks",
+      "name": "Bladed Disks",
+      "family": "spinner",
+      "stackCostGp": 10,
+      "quantity": 20,
+      "description": "A spinning disk of steel loaded into a Spinner. The Spinner's internal mechanisms launch disk blades instead of prods, and it holds ten blades at a time. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A spinning disk blade. Deals slashing damage.",
+        "damageType": "slashing"
+      }
+    },
+    {
+      "id": "arrow/arrows",
+      "name": "Arrows",
+      "family": "arrow",
+      "stackCostGp": 1,
+      "quantity": 20,
+      "description": "A standard arrow. Bows require more training than crossbows, but reload faster, keeping them relevant in the age of mechanical winding and gunpowder. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A standard arrow. Deals piercing damage.",
+        "damageType": "piercing"
+      }
+    },
+    {
+      "id": "arrow/fire-arrows",
+      "name": "Fire Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "An arrow tipped with a combustible charge that deals an extra 1d4 fire damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 fire damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "fire" }
+      }
+    },
+    {
+      "id": "arrow/ice-arrows",
+      "name": "Ice Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "An arrow of ice that deals an extra 1d4 cold damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 cold damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "cold" }
+      }
+    },
+    {
+      "id": "arrow/poison-arrows",
+      "name": "Poison Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A venom-tipped arrow that deals an extra 1d4 poison damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 poison damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "poison" }
+      }
+    },
+    {
+      "id": "arrow/shock-arrows",
+      "name": "Shock Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "An arrow that discharges an extra 1d4 lightning damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 lightning damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "lightning" }
+      }
+    },
+    {
+      "id": "arrow/acid-arrows",
+      "name": "Acid Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A corrosive arrow that deals an extra 1d4 acid damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 acid damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "acid" }
+      }
+    },
+    {
+      "id": "arrow/thunder-arrows",
+      "name": "Thunder Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "An arrow that bursts with thunder, dealing an extra 1d4 thunder damage on a hit. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "On a hit, deals an extra 1d4 thunder damage.",
+        "trigger": "on-hit",
+        "extraDamage": { "formula": "1d4", "type": "thunder" }
+      }
+    },
+    {
+      "id": "arrow/plus-1-arrows",
+      "name": "+1 Arrows",
+      "family": "arrow",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A finely balanced arrow that grants a +1 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +1 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 1,
+        "damageBonus": 1
+      }
+    },
+    {
+      "id": "rifle/rifle-cartridge",
+      "name": "Rifle Cartridge",
+      "family": "rifle",
+      "stackCostGp": 50,
+      "quantity": 20,
+      "description": "A rifle cartridge filled with primer, powder, and a projectile, launched when struck by a hammer or striker. Deals piercing damage. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A standard rifle cartridge. Deals piercing damage.",
+        "damageType": "piercing"
+      }
+    },
+    {
+      "id": "rifle/match-grade-rifle-cartridge",
+      "name": "Match-grade Rifle Cartridge (+1)",
+      "family": "rifle",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A meticulously balanced rifle cartridge that grants a +1 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +1 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 1,
+        "damageBonus": 1
+      }
+    },
+    {
+      "id": "rifle/masterwork-rifle-cartridge",
+      "name": "Masterwork Rifle Cartridge (+2)",
+      "family": "rifle",
+      "stackCostGp": 1250,
+      "quantity": 20,
+      "description": "A master-crafted rifle cartridge that grants a +2 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +2 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 2,
+        "damageBonus": 2
+      }
+    },
+    {
+      "id": "shotgun/slugs",
+      "name": "Slugs",
+      "family": "shotgun",
+      "stackCostGp": 50,
+      "quantity": 20,
+      "description": "A single heavy projectile for a shotgun. Deals piercing damage and carries its stopping power further than shot. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A single heavy projectile. Deals piercing damage.",
+        "damageType": "piercing"
+      }
+    },
+    {
+      "id": "shotgun/buckshot",
+      "name": "Buckshot",
+      "family": "shotgun",
+      "stackCostGp": 50,
+      "quantity": 20,
+      "description": "A payload of small bearing-sized balls for a shotgun that fires in a 15-foot cone and uses one fewer base damage die. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Fires in a 15-foot cone. Uses one fewer base damage die.",
+        "tags": ["spread", "cone"],
+        "damageType": "piercing",
+        "radiusFeet": 15
+      }
+    },
+    {
+      "id": "pistol/pistol-cartridge",
+      "name": "Pistol Cartridge",
+      "family": "pistol",
+      "stackCostGp": 50,
+      "quantity": 20,
+      "description": "A pistol cartridge filled with primer, powder, and a projectile. Deals piercing damage. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "A standard pistol cartridge. Deals piercing damage.",
+        "damageType": "piercing"
+      }
+    },
+    {
+      "id": "pistol/match-grade-pistol-cartridge",
+      "name": "Match-grade Pistol Cartridge (+1)",
+      "family": "pistol",
+      "stackCostGp": 500,
+      "quantity": 20,
+      "description": "A finely balanced pistol cartridge that grants a +1 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +1 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 1,
+        "damageBonus": 1
+      }
+    },
+    {
+      "id": "pistol/masterwork-pistol-cartridge",
+      "name": "Masterwork Pistol Cartridge (+2)",
+      "family": "pistol",
+      "stackCostGp": 1250,
+      "quantity": 20,
+      "description": "A master-crafted pistol cartridge that grants a +2 bonus to attack and damage rolls. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Grants a +2 bonus to attack and damage rolls.",
+        "tags": ["bonus"],
+        "attackBonus": 2,
+        "damageBonus": 2
+      }
+    },
+    {
+      "id": "mpl/mpl-grenade",
+      "name": "MPL Grenade",
+      "family": "mpl",
+      "stackCostGp": 25,
+      "quantity": 1,
+      "description": "A Multi-Purpose Launcher round that bursts on impact in a 10-foot radius, forcing a Dexterity saving throw (DC 13) for 2d6 bludgeoning damage (half on a success). Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Bursts on impact in a 10-foot radius. Targets in the radius must succeed on a Dexterity saving throw (DC 13) or take 2d6 bludgeoning damage, half on a success.",
+        "tags": ["area", "explosive"],
+        "payload": "grenade",
+        "trigger": "on-hit",
+        "radiusFeet": 10,
+        "save": { "ability": "dex", "dc": 13 },
+        "damage": { "formula": "2d6", "type": "bludgeoning" },
+        "halfOnSave": true
+      }
+    },
+    {
+      "id": "mpl/mpl-smoke",
+      "name": "MPL Smoke",
+      "family": "mpl",
+      "stackCostGp": 25,
+      "quantity": 1,
+      "description": "A Multi-Purpose Launcher round that produces a cloud of smoke in a 20-foot radius, heavily obscuring the area for 1 minute. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Produces a cloud of smoke in a 20-foot radius that heavily obscures the area for 1 minute.",
+        "tags": ["area", "obscuring"],
+        "payload": "smoke",
+        "radiusFeet": 20,
+        "condition": "heavily-obscured",
+        "duration": "1 minute"
+      }
+    },
+    {
+      "id": "mpl/mpl-flashbang",
+      "name": "MPL Flashbang",
+      "family": "mpl",
+      "stackCostGp": 25,
+      "quantity": 1,
+      "description": "A Multi-Purpose Launcher round that blinds creatures in a 10-foot radius with a brilliant flash. Targets must succeed on a Constitution saving throw (DC 13) or be blinded until the end of their next turn. Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Bursts in a 10-foot radius with a brilliant flash. Targets must succeed on a Constitution saving throw (DC 13) or be blinded until the end of their next turn.",
+        "tags": ["area", "blind"],
+        "payload": "flashbang",
+        "radiusFeet": 10,
+        "save": { "ability": "con", "dc": 13 },
+        "condition": "blinded",
+        "duration": "until end of target's next turn"
+      }
+    },
+    {
+      "id": "mpl/mpl-incendiary",
+      "name": "MPL Incendiary",
+      "family": "mpl",
+      "stackCostGp": 25,
+      "quantity": 1,
+      "description": "A Multi-Purpose Launcher round that bursts in a 10-foot radius, forcing a Dexterity saving throw (DC 13) for 2d6 fire damage (half on a success). Module homebrew default - not RME source rule text.",
+      "effect": {
+        "text": "Bursts in a 10-foot radius. Targets in the radius must succeed on a Dexterity saving throw (DC 13) or take 2d6 fire damage, half on a success.",
+        "tags": ["area", "fire"],
+        "payload": "incendiary",
+        "trigger": "on-hit",
+        "radiusFeet": 10,
+        "save": { "ability": "dex", "dc": 13 },
+        "damage": { "formula": "2d6", "type": "fire" },
+        "halfOnSave": true
+      }
+    }
+  ]
+}

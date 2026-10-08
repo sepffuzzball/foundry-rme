@@ -164,14 +164,14 @@ test('a catalog rifle registers as the Firearms weapon type', () => {
 // Weapon properties
 // ---------------------------------------------------------------------------
 
-test('registerRmeConfig registers all 42 weapon properties under stable keys', () => {
+test('registerRmeConfig registers all 43 weapon properties under stable keys', () => {
   const config = makeConfig();
   registerRmeConfig(config);
 
-  assert.equal(RME_PROPERTY_NAMES.length, 42);
+  assert.equal(RME_PROPERTY_NAMES.length, 43);
 
   const rmeKeys = Object.keys(config.itemProperties).filter((k) => k.startsWith('rme-'));
-  assert.equal(rmeKeys.length, 42, 'exactly 42 RME property keys registered');
+  assert.equal(rmeKeys.length, 43, 'exactly 43 RME property keys registered');
 
   for (const name of RME_PROPERTY_NAMES) {
     const baseName = name.replace(/\s*\(#\)$/, '');
@@ -183,7 +183,7 @@ test('registerRmeConfig registers all 42 weapon properties under stable keys', (
   }
 });
 
-test('all 42 property labels align with the WeaponProperties reference', () => {
+test('all source property headings register with normalized (no (#)) labels', () => {
   const source = readFileSync(
     join(__dirname, '..', 'rules', 'WeaponProperties.md'),
     'utf8'
@@ -215,6 +215,22 @@ test('native itemProperties and validProperties are left intact', () => {
   for (const key of ['ada', 'amm', 'fin', 'fir', 'foc', 'hvy', 'lgt', 'lod', 'mgc', 'rch', 'rel', 'ret', 'sil', 'spc', 'thr', 'two', 'ver']) {
     assert.ok(config.validProperties.weapon.has(key), `native weapon property "${key}"`);
   }
+});
+
+test('registerRmeConfig adds the RME Ammunition property without touching native amm', () => {
+  const config = makeConfig();
+  registerRmeConfig(config);
+
+  // The RME Ammunition property is a distinct rme-namespaced key so it does not
+  // trigger dnd5e's native `amm` auto-consumption or double spending.
+  assert.deepEqual(config.itemProperties['rme-ammunition'], {
+    label: 'RME: Ammunition',
+  });
+  assert.ok(config.validProperties.weapon.has('rme-ammunition'));
+  // The native `amm` key (and any native itemProperties entry for it) is left
+  // exactly as it was; RME never replaces it.
+  assert.ok(config.validProperties.weapon.has('amm'));
+  assert.equal(config.itemProperties.amm, undefined);
 });
 
 // ---------------------------------------------------------------------------

@@ -26,9 +26,9 @@ const REPOSITORY = 'sepffuzzball/foundry-rme';
 const BASE_VERSION = '0.1.0';
 const RELEASE_URL_BASE = `https://github.com/${REPOSITORY}`;
 
-// The three precompiled packs that every installable release must carry, along
+// The four precompiled packs that every installable release must carry, along
 // with the LevelDB markers we require in the archive.
-const PACKS = ['weapons', 'armor', 'shields'];
+const PACKS = ['weapons', 'armor', 'shields', 'ammunition'];
 
 // Sentinel for "do not pass this argument at all", so the value `undefined` can
 // still mean "use the default" elsewhere without accidentally omitting the flag.
@@ -103,6 +103,7 @@ async function makeFixtureRoot() {
   cpSync(join(ROOT, 'styles'), join(root, 'styles'), { recursive: true });
   mkdirSync(join(root, 'data'), { recursive: true });
   copyFileSync(join(ROOT, 'data', 'catalog.json'), join(root, 'data', 'catalog.json'));
+  copyFileSync(join(ROOT, 'data', 'ammunition.json'), join(root, 'data', 'ammunition.json'));
 
   await buildPacks({ root });
   return root;
@@ -159,6 +160,10 @@ test('package staging area contains only the module payload', () => {
       existsSync(join(pkg, 'data', 'catalog.json')),
       'package/data/catalog.json'
     );
+    assert.ok(
+      existsSync(join(pkg, 'data', 'ammunition.json')),
+      'package/data/ammunition.json'
+    );
 
     // The compiled compendium packs are part of the module payload.
     for (const pack of PACKS) {
@@ -201,10 +206,11 @@ test('archive lists module.json at root, including runtime, catalog, and packs',
     assert.ok(lines.includes('module.json'), 'module.json at archive root');
     assert.ok(!lines.includes('package/module.json'), 'no package/ prefix');
 
-    // The module runtime, styles, and generated catalog are all present.
+    // The module runtime, styles, and generated data files are all present.
     assert.ok(lines.includes('src/main.mjs'), 'runtime included');
     assert.ok(lines.includes('styles/rme.css'), 'styles included');
     assert.ok(lines.includes('data/catalog.json'), 'catalog included');
+    assert.ok(lines.includes('data/ammunition.json'), 'ammunition included');
 
     // Every compiled pack directory with its LevelDB records must be present.
     for (const pack of PACKS) {
@@ -284,6 +290,10 @@ test('rejects when a compiled pack is missing', () => {
         join(ROOT, 'data', 'catalog.json'),
         join(bareRoot, 'data', 'catalog.json')
       );
+      copyFileSync(
+        join(ROOT, 'data', 'ammunition.json'),
+        join(bareRoot, 'data', 'ammunition.json')
+      );
 
       const res = runRelease({
         outDir,
@@ -297,6 +307,43 @@ test('rejects when a compiled pack is missing', () => {
         res.output,
         /directory is missing|compiled LevelDB pack/i,
         'failure must name the missing or unbuilt pack'
+      );
+    } finally {
+      rmSync(bareRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test('rejects when data/ammunition.json is missing', () => {
+  withTempOut((outDir) => {
+    // Point at a fixture root that has the catalog but omits ammunition.json.
+    const bareRoot = mkdtempSync(join(tmpdir(), 'foundry-rme-no-ammo-'));
+    try {
+      copyFileSync(TRACKED_MANIFEST, join(bareRoot, 'module.json'));
+      cpSync(join(ROOT, 'src'), join(bareRoot, 'src'), { recursive: true });
+      cpSync(join(ROOT, 'styles'), join(bareRoot, 'styles'), { recursive: true });
+      mkdirSync(join(bareRoot, 'data'), { recursive: true });
+      copyFileSync(
+        join(ROOT, 'data', 'catalog.json'),
+        join(bareRoot, 'data', 'catalog.json')
+      );
+
+      const res = runRelease({
+        outDir,
+        root: bareRoot,
+        runNumber: '1',
+        expectFailure: true,
+      });
+      assert.equal(
+        res.ok,
+        false,
+        'packaging must fail without data/ammunition.json'
+      );
+      assert.notEqual(res.status, 0);
+      assert.match(
+        res.output,
+        /ammunition\.json/i,
+        'failure must name the missing ammunition file'
       );
     } finally {
       rmSync(bareRoot, { recursive: true, force: true });

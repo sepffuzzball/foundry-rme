@@ -46,10 +46,12 @@ function kebab(text) {
     .replace(/^-+|-+$/g, '');
 }
 
-// The ` (#)` parameter placeholder on Firearm, Loading, and Unwieldy is not part
-// of the property name (it marks a numeric parameter), so it is stripped from
-// the display label - consistent with the tier-property labels used elsewhere in
-// the module.
+// The display title of an RME property. The source headings carry a ` (#)`
+// parameter placeholder on Firearm, Loading, and Unwieldy that is not part of
+// the property name; RME_PROPERTY_NAMES already exposes the base titles, so
+// this replacement is a no-op today but is kept defensively so a ` (#)` suffix
+// never reaches a sheet label - consistent with the tier-property labels used
+// elsewhere in the module.
 function propertyBaseName(name) {
   return name.replace(/\s*\(#\)$/, '');
 }
@@ -123,8 +125,10 @@ export function registerRmeConfig(config) {
 
   // --- Weapon properties -----------------------------------------------------
   // Register every RME weapon property under a stable `rme-<kebab>` key and
-  // expose it as a valid weapon property. The native key space (e.g. `fir`) is
-  // never touched because RME keys are namespaced with the `rme-` prefix.
+  // expose it as a valid weapon property. The native key space (e.g. `fir`, and
+  // the native `amm` ammunition key) is never touched because RME keys are
+  // namespaced with the `rme-` prefix, so RME's Ammunition property does not
+  // trigger dnd5e's native ammo consumption or double spending.
   for (const name of RME_PROPERTY_NAMES) {
     const baseName = propertyBaseName(name);
     const key = `rme-${kebab(baseName)}`;

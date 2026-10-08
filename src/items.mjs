@@ -24,8 +24,18 @@
 
 import { LEVELS, selectTier, resolveTraining } from './training.mjs';
 import { parsePhysical, tierProperties, rmeWeaponType } from './rme-metadata.mjs';
+import { magazineCapacity, reloadOptions } from './ammunition.mjs';
 
 export const FLAGS_KEY = 'foundry-rme';
+
+// The stable module-owned activity ids for a magazine weapon's activities. Each
+// is exactly 16 ASCII characters so it is safe as a Foundry embedded key.
+export const RELOAD_FULL_ID = 'rmeReloadFull000';
+export const RELOAD_FAST_ID = 'rmeReloadFast000';
+// The default attack activity on a magazine weapon. dnd5e 6.x WeaponData
+// ._preCreate skips generating a native attack when any reload Utility activity
+// is present, so a magazine weapon must carry an explicit attack of its own.
+export const ATTACK_ID = 'rmeAttack0000000';
 
 // Explicit armor-name -> dnd5e armor category. The catalog derives armor names
 // from the Armor.md table rows, so this is a fixed lookup rather than a guess.
@@ -307,6 +317,76 @@ function repairPhysical(current, parsed) {
 }
 
 // ---------------------------------------------------------------------------
+// Reload activities
+// ---------------------------------------------------------------------------
+
+// The default dnd5e weapon attack activity, included so a magazine weapon can
+// carry its reload activities without dnd5e auto-creating a duplicate native
+// attack (and so the attack is always ordered first). Only module-owned fields
+// that dnd5e's activity schema does not already default are written; the rest of
+// the activity data is filled in by the system when the item loads.
+function defaultAttackActivity() {
+  return {
+    _id: ATTACK_ID,
+    sort: 0,
+    type: 'attack',
+    name: 'Attack',
+  };
+}
+
+// Build one utility reload activity from a reload option. The source shape is
+// fixed and module-owned; dnd5e fills any schema defaults (description, img,
+// duration, range, target, uses, and so on) when the item is loaded. Only the
+// module-owned fields are written so user/schema defaults are not clobbered.
+function reloadActivityFromOption(option, id, sort) {
+  return {
+    _id: id,
+    sort,
+    type: 'utility',
+    name: `RME ${option.label}`,
+    activation: {
+      type: option.activationType,
+      value: 1,
+      condition: option.label,
+      override: false,
+    },
+    consumption: {
+      targets: [],
+      scaling: { allowed: false, max: '' },
+      spellSlot: false,
+    },
+    roll: { formula: '', name: '', prompt: false, visible: false },
+    flags: { [FLAGS_KEY]: { reloadOptionId: option.id } },
+  };
+}
+
+// The module-owned reload activities for an entry at a level, keyed by the
+// stable ids. A non-magazine weapon (capacity 0) returns an empty object. The
+// plain full-action ("action-full") reload is always present and maps to
+// `rmeReloadFull000`; a faster tier-specific second option (when `reloadOptions`
+// carries one) maps to `rmeReloadFast000`. Both are written only when the
+// magazine capacity is positive.
+export function reloadActivityData(entry, level = 'untrained') {
+  const safeLevel = normalizeLevel(level);
+  if (magazineCapacity(entry, safeLevel) <= 0) return {};
+  const options = reloadOptions(entry, safeLevel);
+  if (options.length === 0) return {};
+
+  const out = {};
+  const full = options.find((o) => o.id === 'action-full');
+  if (full) {
+    out[RELOAD_FULL_ID] = reloadActivityFromOption(full, RELOAD_FULL_ID, 1);
+  }
+  if (options.length > 1) {
+    const fast = options[1];
+    if (fast && fast.id !== 'action-full') {
+      out[RELOAD_FAST_ID] = reloadActivityFromOption(fast, RELOAD_FAST_ID, 2);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // makeItemData
 // ---------------------------------------------------------------------------
 
@@ -339,11 +419,22 @@ export function makeItemData(entry, level = 'untrained') {
     payload.system.properties = props.map((p) => p.key);
 
     const base = tokens.length === 1 ? damageBaseFromToken(tokens[0], entry) : null;
+    const reload = reloadActivityData(entry, safeLevel);
+    const hasReload = Object.keys(reload).length > 0;
     if (base) {
       payload.system.damage = { base };
-    } else {
-      // No parseable damage: suppress any native attack activity that the
-      // dnd5e system would otherwise auto-create for a weapon.
+    }
+    if (hasReload) {
+      // A magazine weapon carries its reload activities and an explicit native
+      // attack. dnd5e 6.x does not auto-create an attack when a reload Utility
+      // activity is present, so the attack must be supplied (and ordered first).
+      payload.system.activities = {
+        [ATTACK_ID]: defaultAttackActivity(),
+        ...reload,
+      };
+    } else if (!base) {
+      // No parseable damage and no reload: suppress the native attack activity
+      // that the dnd5e system would otherwise auto-create for a weapon.
       payload.system.activities = {};
     }
     if (soleRangedProfile(tokens)) {
@@ -377,14 +468,18 @@ export function makeItemData(entry, level = 'untrained') {
 // Build a differential update for an existing embedded item. Only module-owned
 // fields are returned: `system.type`, `system.proficient`, `system.properties`
 // (RME keys only, merged over the existing native/user properties), the parsed
-// physical stats repaired only when currently zero/null/missing, and the module
-// flag block (activeTier / activeProperties / expertPerk). Damage and range
-// follow the legacy conservative rules: a single unambiguous damage token is
-// promoted into `system.damage.base`, a sole ranged profile sets `system.range`,
-// and a tier with no single unambiguous attack profile zeroes/clears prior
-// module-owned native damage/range so a stale parseable profile is not left
-// behind. Name, description, activities, enchantments, and any other field are
-// never included.
+// physical stats repaired only when currently zero/null/missing, the module-owned
+// reload activities for a magazine weapon (as dotted `system.activities.<id>`
+// keys, plus the `.-=` deletion operator to drop a stale fast reload), the
+// module-owned default attack for a magazine weapon that has no attack yet (a
+// magazine weapon cannot rely on dnd5e auto-creating one), and the module flag
+// block (activeTier / activeProperties / expertPerk). Damage and
+// range follow the legacy conservative rules: a single unambiguous damage token
+// is promoted into `system.damage.base`, a sole ranged profile sets
+// `system.range`, and a tier with no single unambiguous attack profile
+// zeroes/clears prior module-owned native damage/range so a stale parseable
+// profile is not left behind. Name, description, enchantments, and any
+// non-module activity id are never included.
 export function itemProfilePatch(item, entry, level = 'untrained') {
   const safeLevel = normalizeLevel(level);
   const system = { proficient: proficientForLevel(safeLevel) };
@@ -419,6 +514,33 @@ export function itemProfilePatch(item, entry, level = 'untrained') {
       system.damage = { base: clearedDamageBase(item.system) };
       if (item.system?.range) {
         system.range = clearedRange();
+      }
+    }
+
+    // Module-owned reload activities for a magazine weapon, written as dotted
+    // `system.activities.<id>` keys so user-defined activity ids are left alone.
+    // A module-owned reload activity no longer granted by the tier (e.g. the
+    // fast reload once a source tier drops it) is removed via the `.-=` deletion
+    // operator, which also never touches any other activity id.
+    const reload = reloadActivityData(entry, safeLevel);
+    const currentActivities = item.system?.activities || {};
+    for (const [id, activity] of Object.entries(reload)) {
+      system[`activities.${id}`] = activity;
+    }
+    for (const id of [RELOAD_FULL_ID, RELOAD_FAST_ID]) {
+      if (!reload[id] && activityById(currentActivities, id)) {
+        system[`activities.-=${id}`] = null;
+      }
+    }
+    // A magazine weapon must carry an explicit native attack, since dnd5e does
+    // not auto-create one when a reload Utility activity is present. Add the
+    // module-owned default (as a granular dotted path) only when no attack
+    // activity (native or user-added) exists; never add a second attack or
+    // replace an existing one.
+    if (Object.keys(reload).length > 0) {
+      const hasAttack = activityValues(currentActivities).some((a) => a?.type === 'attack');
+      if (!hasAttack) {
+        system[`activities.${ATTACK_ID}`] = defaultAttackActivity();
       }
     }
   } else if (entry.kind === 'armor') {
@@ -522,6 +644,69 @@ function rmeFlagEqual(item, target) {
   );
 }
 
+// Read one activity out of an activities collection whether it is a live dnd5e
+// 6.x MappingField/Collection (a Map-like keyed by id) or a plain serialized
+// object keyed by id. A live Collection exposes `.get(id)`; a serialized object
+// is addressed by its own key. Never falls back to a non-own key, so a live
+// Map is never misread as a plain object.
+function activityById(activities, id) {
+  if (!activities) return undefined;
+  if (typeof activities.get === 'function') return activities.get(id);
+  return activities[id];
+}
+
+// Enumerate the activities in a collection whether it is live (a Map-like
+// Collection exposing `.values()`) or a plain serialized object. A live
+// Collection must be read via its iterator, since `Object.values` on a Map would
+// enumerate its internal slots rather than the activities.
+function activityValues(activities) {
+  if (!activities) return [];
+  if (typeof activities.values === 'function') return Array.from(activities.values());
+  return Object.values(activities);
+}
+
+// Compare one module-owned reload activity against its target by the normalized
+// shape the module controls (name, type, activation type/condition, and the
+// reload-option flag). Only these fields are compared, reading them field by
+// field rather than deep-comparing the whole object, so dnd5e's schema defaults
+// on a stored live DataModel never register as a difference (and therefore a
+// spurious sync loop). A target of `null` means the tier does not grant that
+// activity; the current item must then not carry it either.
+function reloadActivityMatches(current, target) {
+  if (!target) return !current;
+  if (!current) return false;
+  return (
+    current.name === target.name &&
+    current.type === target.type &&
+    current.activation?.type === target.activation?.type &&
+    current.activation?.condition === target.activation?.condition &&
+    current.flags?.[FLAGS_KEY]?.reloadOptionId === target.flags?.[FLAGS_KEY]?.reloadOptionId
+  );
+}
+
+// Compare only the module-managed reload activities (full/fast) between an item
+// and the target set, ignoring any user-defined activity id (and the module's
+// own default attack activity). Returns true only when both module-managed
+// reload activities match their target in normalized shape.
+function reloadActivitiesEqual(item, target) {
+  const current = item.system?.activities || {};
+  if (!reloadActivityMatches(activityById(current, RELOAD_FULL_ID), target[RELOAD_FULL_ID])) return false;
+  if (!reloadActivityMatches(activityById(current, RELOAD_FAST_ID), target[RELOAD_FAST_ID])) return false;
+  return true;
+}
+
+// Whether a magazine weapon lacks an explicit native attack activity. dnd5e 6.x
+// does not auto-create an attack when a reload Utility activity is present, so a
+// magazine weapon must carry one explicitly. The guard fires only for a magazine
+// weapon (a non-empty target reload set) and only when no attack activity
+// (module-owned or user-added) is present, so an existing user attack is never
+// replaced and the module default is never stacked on top of it.
+function attackActivityMissing(item, targetReload) {
+  if (Object.keys(targetReload).length === 0) return false;
+  const current = item.system?.activities || {};
+  return !activityValues(current).some((a) => a?.type === 'attack');
+}
+
 // Sync embedded items on `actor` that carry `flags['foundry-rme'].catalogId`
 // and are present in `equipment` (an iterable of catalog entries). Items that
 // are unknown (no catalogId, or an id not in the catalog) are left untouched.
@@ -543,6 +728,7 @@ export async function syncActorItems(actor, equipment, training = {}) {
     const level = resolveTraining(entry, training);
     const patch = itemProfilePatch(item, entry, level);
     const system = patch.system;
+    const targetReload = reloadActivityData(entry, level);
 
     const differs =
       (system.proficient !== undefined &&
@@ -554,6 +740,8 @@ export async function syncActorItems(actor, equipment, training = {}) {
       (system.range && !rangeEqual(item.system?.range, system.range)) ||
       (system.weight && !weightEqual(item.system?.weight, system.weight)) ||
       (system.price && !priceEqual(item.system?.price, system.price)) ||
+      !reloadActivitiesEqual(item, targetReload) ||
+      attackActivityMissing(item, targetReload) ||
       (patch.flags && !rmeFlagEqual(item, patch.flags));
 
     if (differs) updates.push(patch);

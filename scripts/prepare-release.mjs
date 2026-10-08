@@ -19,9 +19,11 @@
 //       OUT_DIR/package/src/
 //       OUT_DIR/package/styles/
 //       OUT_DIR/package/data/catalog.json
+//       OUT_DIR/package/data/ammunition.json
 //       OUT_DIR/package/packs/weapons/
 //       OUT_DIR/package/packs/armor/
 //       OUT_DIR/package/packs/shields/
+//       OUT_DIR/package/packs/ammunition/
 //     The staged manifest is identical to the source except for `version` and
 //     the release `manifest`/`download` URLs.
 //   - Copies the staged manifest to OUT_DIR/module.json.
@@ -29,9 +31,9 @@
 //     root (not under a package/ folder), using the external `zip` executable.
 //   - Writes OUT_DIR/release.json { tag, version, repository }.
 //
-// The three precompiled RME compendium packs are required inputs: each pack
+// The four precompiled RME compendium packs are required inputs: each pack
 // path must exist and be a compiled LevelDB directory (a CURRENT marker and/or
-// .ldb data files), and module.json must declare all three. Only the module
+// .ldb data files), and module.json must declare all four. Only the module
 // payload plus the compiled packs are archived, so .git/, rules/,
 // graphify-out/, tests/, and any local secrets are excluded by construction.
 
@@ -52,13 +54,14 @@ import { execFileSync } from 'node:child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-// The three precompiled compendium packs shipped in every release. `name` is
+// The four precompiled compendium packs shipped in every release. `name` is
 // both the pack directory and the module.json pack name; the path is explicit
 // so a future rename cannot silently ship a different layout.
 const PACKS = [
   { name: 'weapons', path: 'packs/weapons' },
   { name: 'armor', path: 'packs/armor' },
   { name: 'shields', path: 'packs/shields' },
+  { name: 'ammunition', path: 'packs/ammunition' },
 ];
 
 const ZIP_NAME = 'foundry-rme.zip';
@@ -69,6 +72,7 @@ function pathsFor(projectRoot) {
     srcDir: join(projectRoot, 'src'),
     stylesDir: join(projectRoot, 'styles'),
     catalogJson: join(projectRoot, 'data', 'catalog.json'),
+    ammunitionJson: join(projectRoot, 'data', 'ammunition.json'),
     packsDir: join(projectRoot, 'packs'),
   };
 }
@@ -159,6 +163,32 @@ function validateCatalog(paths) {
     !Array.isArray(catalog.references)
   ) {
     fail('data/catalog.json does not look like a built catalog; run `npm run build:catalog`');
+  }
+}
+
+// data/ammunition.json is a required runtime data source, not an optional
+// extra: the RME Ammunition compendium pack is compiled from it, so a release
+// cannot ship without it.
+function validateAmmunition(paths) {
+  if (!existsSync(paths.ammunitionJson)) {
+    fail(
+      'data/ammunition.json is missing; it is required for the RME Ammunition ' +
+        'pack (run `npm run build:packs` or restore it under data/)'
+    );
+  }
+  assertFile(paths.ammunitionJson, 'data/ammunition.json');
+  let ammunition;
+  try {
+    ammunition = JSON.parse(readFileSync(paths.ammunitionJson, 'utf8'));
+  } catch {
+    fail('data/ammunition.json is not valid JSON');
+  }
+  if (
+    !ammunition ||
+    !Array.isArray(ammunition.ammunition) ||
+    ammunition.ammunition.length === 0
+  ) {
+    fail('data/ammunition.json does not look like a built ammunition source');
   }
 }
 
@@ -287,6 +317,7 @@ function main() {
   assertDir(paths.srcDir, 'src');
   assertDir(paths.stylesDir, 'styles');
   validateCatalog(paths);
+  validateAmmunition(paths);
   validatePackManifest(sourceManifest);
 
   // Every pack must exist and be an actual compiled LevelDB directory. This
@@ -329,6 +360,11 @@ function main() {
   copyDirRecursive(paths.stylesDir, join(packageDir, 'styles'));
   mkdirSync(join(packageDir, 'data'), { recursive: true });
   copyFileSync(paths.catalogJson, join(packageDir, 'data', 'catalog.json'));
+  // The ammunition source mirrors catalog.json: both are build inputs under
+  // data/, so a release stays self-contained (a local recompile would not need
+  // the raw rules/ markdown). It is required, not optional, and was validated
+  // above.
+  copyFileSync(paths.ammunitionJson, join(packageDir, 'data', 'ammunition.json'));
 
   // Stage the compiled compendium packs under package/packs/<name> so they are
   // archived alongside the rest of the module payload.
@@ -378,7 +414,7 @@ function main() {
   console.log(`release.json:       ${releasePath}`);
   console.log(`release version:    ${releaseVersion} (tag ${tag})`);
   console.log(`repository:         ${repository}`);
-  console.log('archive contents (module.json at root, src, styles, data/catalog.json, packs/{weapons,armor,shields}):');
+  console.log('archive contents (module.json at root, src, styles, data/catalog.json, packs/{weapons,armor,shields,ammunition}):');
   execFileSync('zip', ['-sf', zipPath], {
     stdio: 'inherit',
   });

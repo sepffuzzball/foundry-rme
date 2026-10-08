@@ -65,9 +65,9 @@ jobs:
             assert.ok(!listing.includes('package/module.json'), 'no package/ prefix');
             assert.ok(listing.includes('data/catalog.json'), 'data/catalog.json must be archived');
 
-            // The three precompiled compendium packs must be archived with their
+            // The four precompiled compendium packs must be archived with their
             // LevelDB records (CURRENT marker and .ldb data files).
-            for (const pack of ['weapons', 'armor', 'shields']) {
+            for (const pack of ['weapons', 'armor', 'shields', 'ammunition']) {
               const prefix = `packs/${pack}/`;
               assert.ok(
                 listing.includes(`${prefix}CURRENT`),

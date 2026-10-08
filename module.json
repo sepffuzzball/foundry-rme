@@ -8,7 +8,8 @@
   "packs": [
     { "name": "weapons", "label": "RME Weapons", "system": "dnd5e", "path": "packs/weapons", "type": "Item" },
     { "name": "armor", "label": "RME Armor", "system": "dnd5e", "path": "packs/armor", "type": "Item" },
-    { "name": "shields", "label": "RME Shields", "system": "dnd5e", "path": "packs/shields", "type": "Item" }
+    { "name": "shields", "label": "RME Shields", "system": "dnd5e", "path": "packs/shields", "type": "Item" },
+    { "name": "ammunition", "label": "RME Ammunition", "system": "dnd5e", "path": "packs/ammunition", "type": "Item" }
   ],
   "esmodules": ["src/main.mjs"],
   "styles": ["styles/rme.css"]

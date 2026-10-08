@@ -49,27 +49,42 @@ const KNOWN_PROPERTY_BASES = new Set(
 // Property names
 // ---------------------------------------------------------------------------
 
-test('RME_PROPERTY_NAMES matches every ##### heading in WeaponProperties.md', () => {
+test('RME_PROPERTY_NAMES covers every ##### heading in WeaponProperties.md', () => {
   // Note: the spec text says "40 headings" but rules/WeaponProperties.md
   // currently lists 42. This test reflects the source as the source of truth.
+  // The ` (#)` parameter placeholder on Firearm/Loading/Unwieldy is not part of
+  // the property title, so it is normalized away before comparing.
   const source = readFileSync(
     join(__dirname, '..', 'rules', 'WeaponProperties.md'),
     'utf8'
   );
-  const headings = [...source.matchAll(/^##### (.+)$/gm)].map((m) => m[1].trim());
+  const headings = [...source.matchAll(/^##### (.+)$/gm)]
+    .map((m) => m[1].trim().replace(/\s*\(#\)$/, ''));
 
   assert.ok(headings.length >= 40, 'source has at least 40 property headings');
-  assert.deepEqual(RME_PROPERTY_NAMES, headings);
+  for (const heading of headings) {
+    assert.ok(
+      RME_PROPERTY_NAMES.includes(heading),
+      `missing registered property for source heading "${heading}"`
+    );
+  }
+  // Ammunition is an RME-added property with no source heading, so the exported
+  // list is exactly one entry larger than the normalized source heading set.
+  assert.equal(RME_PROPERTY_NAMES.length, headings.length + 1);
+  assert.ok(RME_PROPERTY_NAMES.includes('Ammunition'));
   assert.equal(new Set(RME_PROPERTY_NAMES).size, RME_PROPERTY_NAMES.length);
   for (const name of RME_PROPERTY_NAMES) {
     assert.ok(name.length > 0, 'property names are non-empty');
   }
 });
 
-test('RME_PROPERTY_NAMES contains the parameterized headings verbatim', () => {
-  assert.ok(RME_PROPERTY_NAMES.includes('Firearm (#)'));
-  assert.ok(RME_PROPERTY_NAMES.includes('Loading (#)'));
-  assert.ok(RME_PROPERTY_NAMES.includes('Unwieldy (#)'));
+test('RME_PROPERTY_NAMES uses base titles that hide the (#) placeholder', () => {
+  // The source headings carry the ` (#)` parameter placeholder, but the exposed
+  // titles are the base names so a sheet never shows the placeholder.
+  assert.ok(RME_PROPERTY_NAMES.includes('Firearm'));
+  assert.ok(RME_PROPERTY_NAMES.includes('Loading'));
+  assert.ok(RME_PROPERTY_NAMES.includes('Unwieldy'));
+  assert.ok(!RME_PROPERTY_NAMES.some((n) => /\(#\)/.test(n)));
 });
 
 test('every RME property base name is usable as a tier label', () => {
@@ -371,6 +386,54 @@ test('tierProperties: source typos are normalized to known properties', () => {
   assert.ok(wingedLabels.includes('Puncture'), 'winged-spear Punc maps to Puncture');
   const guisarmeLabels = tierProperties(guisarme, 'expert').map((p) => p.label);
   assert.ok(guisarmeLabels.includes('Two-Handed'), 'guisarme "Two handed" maps to Two-Handed');
+});
+
+test('tierProperties: Ammunition is appended to ammo-launching ranged weapons', () => {
+  const levels = ['untrained', 'proficient', 'expert'];
+  const ammoIds = [
+    'firearms/bolt-action-rifle',
+    'bows/shortbow',
+    'crossbows/light-crossbow',
+    'crossbows/spinner',
+    'crossbows/portable-ballista',
+  ];
+  for (const id of ammoIds) {
+    for (const level of levels) {
+      const props = tierProperties(entry(id), level);
+      const ammo = props.find((p) => p.label === 'Ammunition');
+      assert.ok(ammo, `${id}@${level}: expected the RME Ammunition property`);
+      assert.equal(ammo.key, 'rme-ammunition');
+      assert.equal(ammo.label, 'Ammunition');
+      assert.equal(ammo.raw, 'Ammunition');
+    }
+  }
+});
+
+test('tierProperties: Ammunition is absent for Launch Weapons, melee, shields, and armor', () => {
+  const levels = ['untrained', 'proficient', 'expert'];
+  const noAmmoIds = [
+    'launch-weapons/atlatl',
+    'launch-weapons/blowgun',
+    'launch-weapons/portable-catapult',
+    'launch-weapons/rope-dart',
+    'launch-weapons/sling',
+    'launch-weapons/sling-staff',
+    'launch-weapons/sling-tube',
+    'launch-weapons/wrist-shot',
+    'axes/battle-axe',
+    'shields/skirmish',
+    'armor/chain-shirt',
+    'natural-weapons/claw',
+  ];
+  for (const id of noAmmoIds) {
+    for (const level of levels) {
+      const props = tierProperties(entry(id), level);
+      assert.ok(
+        !props.some((p) => p.label === 'Ammunition'),
+        `${id}@${level}: should not grant Ammunition`
+      );
+    }
+  }
 });
 
 test('tierProperties: armor has no tiers so yields no properties', () => {

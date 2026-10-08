@@ -8,7 +8,11 @@ import {
   makeItemData,
   itemProfilePatch,
   syncActorItems,
+  reloadActivityData,
   FLAGS_KEY,
+  ATTACK_ID,
+  RELOAD_FULL_ID,
+  RELOAD_FAST_ID,
 } from '../src/items.mjs';
 import { tierProperties } from '../src/rme-metadata.mjs';
 
@@ -31,6 +35,9 @@ const chainShirt = entry('armor/chain-shirt');
 const claw = entry('natural-weapons/claw');
 const tail = entry('natural-weapons/tail');
 const boltActionRifle = entry('firearms/bolt-action-rifle');
+const breakActionRevolver = entry('firearms/break-action-revolver');
+const repeatingCrossbow = entry('crossbows/repeating-crossbow');
+const spinner = entry('crossbows/spinner');
 
 // Synthetic malformed-mode entries used to exercise the conservative parser.
 const twoMeleeWeapon = {
@@ -360,6 +367,74 @@ test('makeItemData: natural weapons never fabricate weight or price at any level
 });
 
 // ---------------------------------------------------------------------------
+// makeItemData - magazine reload activities
+// ---------------------------------------------------------------------------
+
+test('makeItemData: a magazine rifle includes the default attack and full reload activity', () => {
+  const data = makeItemData(boltActionRifle, 'untrained');
+  assert.deepEqual(Object.keys(data.system.activities).sort(), [ATTACK_ID, RELOAD_FULL_ID]);
+  assert.equal(data.system.activities[ATTACK_ID]._id, ATTACK_ID);
+  assert.equal(data.system.activities[ATTACK_ID].type, 'attack');
+  assert.equal(data.system.activities[ATTACK_ID].name, 'Attack');
+  assert.equal(data.system.activities[ATTACK_ID].sort, 0);
+  const full = data.system.activities[RELOAD_FULL_ID];
+  assert.equal(full._id, RELOAD_FULL_ID);
+  assert.equal(full.type, 'utility');
+  assert.equal(full.sort, 1);
+  assert.equal(full.name, 'RME Reload (Action)');
+  assert.deepEqual(full.activation, {
+    type: 'action',
+    value: 1,
+    condition: 'Reload (Action)',
+    override: false,
+  });
+  assert.equal(full.flags[FLAGS_KEY].reloadOptionId, 'action-full');
+  // Untrained rifle has no faster reload, so no stale fast activity is present.
+  assert.equal(data.system.activities[RELOAD_FAST_ID], undefined);
+});
+
+test('makeItemData: an expert magazine rifle adds the single-cartridge object-interaction reload', () => {
+  const data = makeItemData(boltActionRifle, 'expert');
+  const fast = data.system.activities[RELOAD_FAST_ID];
+  assert.equal(fast._id, RELOAD_FAST_ID);
+  assert.equal(fast.type, 'utility');
+  assert.equal(fast.sort, 2);
+  assert.equal(fast.name, 'RME Reload (Object Interaction (single cartridge))');
+  assert.equal(fast.activation.type, 'special');
+  assert.equal(fast.activation.condition, 'Reload (Object Interaction (single cartridge))');
+  assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'special-single');
+});
+
+test('makeItemData: repeating crossbow and spinner carry reload activities with a free reload', () => {
+  for (const weapon of [repeatingCrossbow, spinner]) {
+    const data = makeItemData(weapon, 'proficient');
+    assert.deepEqual(Object.keys(data.system.activities).sort(), [ATTACK_ID, RELOAD_FULL_ID, RELOAD_FAST_ID].sort());
+    const fast = data.system.activities[RELOAD_FAST_ID];
+    assert.equal(fast.activation.type, 'special');
+    assert.equal(fast.activation.condition, 'Reload (Free)');
+    assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'special-full');
+  }
+});
+
+test('makeItemData: a magazine weapon attack uses a valid 16-char module id', () => {
+  // The module default attack id must be a stable, exactly-16-ASCII-character
+  // Foundry embedded-key, never a short id like "attack" that dnd5e would
+  // reject. The same id is used for the activity's own _id and its mapping key.
+  assert.equal(ATTACK_ID.length, 16);
+  assert.match(ATTACK_ID, /^[a-zA-Z0-9]{16}$/);
+  for (const weapon of [boltActionRifle, repeatingCrossbow, spinner]) {
+    const data = makeItemData(weapon, 'proficient');
+    const activity = data.system.activities[ATTACK_ID];
+    assert.ok(activity, `expected the module default attack activity on ${weapon.id}`);
+    assert.equal(activity._id, ATTACK_ID);
+    assert.equal(activity._id.length, 16);
+    assert.equal(activity.type, 'attack');
+    // The activities object key is the same 16-char id as the _id.
+    assert.ok(data.system.activities[ATTACK_ID]);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // itemProfilePatch
 // ---------------------------------------------------------------------------
 
@@ -576,14 +651,128 @@ test('itemProfilePatch: repairs zero/missing weight and price but never overwrit
   assert.equal(patch2.system.price, undefined);
 });
 
+test('itemProfilePatch: a magazine weapon adds reload activity keys as dotted system paths', () => {
+  const item = { _id: 'r1', system: { proficient: 1 } };
+  const patch = itemProfilePatch(item, boltActionRifle, 'proficient');
+  const full = patch.system[`activities.${RELOAD_FULL_ID}`];
+  assert.ok(full, 'expected the full reload activity key on the patch');
+  assert.equal(full._id, RELOAD_FULL_ID);
+  assert.equal(full.type, 'utility');
+  assert.equal(full.name, 'RME Reload (Action)');
+  assert.equal(full.activation.type, 'action');
+  assert.equal(full.flags[FLAGS_KEY].reloadOptionId, 'action-full');
+  // A blank magazine weapon has no attack, so the module-owned default attack is
+  // written through the same granular dotted path.
+  const attack = patch.system[`activities.${ATTACK_ID}`];
+  assert.ok(attack, 'expected the module default attack activity key on the patch');
+  assert.equal(attack._id, ATTACK_ID);
+  assert.equal(attack.type, 'attack');
+  assert.equal(attack.name, 'Attack');
+  assert.equal(attack.sort, 0);
+  // No stale fast activity exists on a blank item, so no deletion operator is written.
+  assert.equal(patch.system[`activities.-=${RELOAD_FAST_ID}`], undefined);
+  // The patch never carries the whole activities collection or a user activity id.
+  assert.equal(patch.system.activities, undefined);
+});
+
+test('itemProfilePatch: a magazine weapon at expert writes the fast reload activity key', () => {
+  const item = { _id: 'r2', system: { proficient: 1 } };
+  const patch = itemProfilePatch(item, breakActionRevolver, 'expert');
+  const fast = patch.system[`activities.${RELOAD_FAST_ID}`];
+  assert.ok(fast, 'expected the fast reload activity key on the patch');
+  assert.equal(fast.activation.type, 'bonus');
+  assert.equal(fast.activation.condition, 'Reload (Bonus)');
+  assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'bonus-full');
+});
+
+test('itemProfilePatch: drops a stale fast reload when the tier no longer grants it', () => {
+  const item = {
+    _id: 'r3',
+    system: {
+      proficient: 1,
+      activities: {
+        attack: { _id: 'attack', type: 'attack', name: 'Attack' },
+        [RELOAD_FULL_ID]: {
+          _id: RELOAD_FULL_ID,
+          type: 'utility',
+          name: 'RME Reload (Action)',
+          activation: { type: 'action', value: 1, condition: 'Reload (Action)', override: false },
+        },
+        [RELOAD_FAST_ID]: {
+          _id: RELOAD_FAST_ID,
+          type: 'utility',
+          name: 'RME Reload (Bonus)',
+          activation: { type: 'bonus', value: 1, condition: 'Reload (Bonus)', override: false },
+        },
+      },
+    },
+  };
+  // At proficient the break-action revolver grants only the full reload.
+  const patch = itemProfilePatch(item, breakActionRevolver, 'proficient');
+  assert.equal(patch.system[`activities.-=${RELOAD_FAST_ID}`], null);
+  assert.ok(patch.system[`activities.${RELOAD_FULL_ID}`]);
+  // A native attack already exists, so the module default attack is not written on top.
+  assert.equal(patch.system[`activities.${ATTACK_ID}`], undefined);
+  // The native attack activity and any user activity id are left untouched.
+  assert.equal(patch.system.activities, undefined);
+});
+
 // ---------------------------------------------------------------------------
 // syncActorItems - mock helpers
 // ---------------------------------------------------------------------------
 
+function setPath(obj, path, value) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (cur instanceof Map) {
+      let next = cur.get(key);
+      if (!next || typeof next !== 'object') {
+        next = {};
+        cur.set(key, next);
+      }
+      cur = next;
+    } else {
+      if (!cur[key] || typeof cur[key] !== 'object') cur[key] = {};
+      cur = cur[key];
+    }
+  }
+  const last = parts[parts.length - 1];
+  if (cur instanceof Map) {
+    cur.set(last, value);
+  } else {
+    cur[last] = value;
+  }
+}
+
+function deletePath(obj, path) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    cur = cur?.[key];
+    if (!cur) return;
+  }
+  const last = parts[parts.length - 1];
+  if (cur instanceof Map) {
+    cur.delete(last);
+  } else {
+    delete cur[last];
+  }
+}
+
 function mergeItem(item, update) {
   const merged = { ...item, system: { ...item.system } };
   for (const [key, value] of Object.entries(update.system)) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
+    // A `.-=` key is the Foundry deletion operator: remove that nested key.
+    const del = key.indexOf('.-=');
+    if (del !== -1) {
+      deletePath(merged.system, `${key.slice(0, del)}.${key.slice(del + 3)}`);
+    } else if (key.includes('.')) {
+      // A dotted key expands into nested objects, never replacing siblings.
+      setPath(merged.system, key, value);
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
       merged.system[key] = { ...(merged.system[key] || {}), ...value };
     } else {
       merged.system[key] = value;
@@ -624,6 +813,13 @@ function fullySyncedState(entryLike, level) {
   const system = { ...data.system };
   delete system.description;
   return { flags: { [FLAGS_KEY]: data.flags[FLAGS_KEY] }, system };
+}
+
+// Build a live-like dnd5e 6.x activity collection: a Map whose entries are the
+// module-owned activities keyed by id, as a live MappingField/Collection would
+// expose them (`.get(id)` and `.values()`), instead of a plain serialized object.
+function activitiesMap(activitiesObj) {
+  return new Map(Object.entries(activitiesObj));
 }
 
 // ---------------------------------------------------------------------------
@@ -882,6 +1078,280 @@ test('syncActorItems: a legacy rifle with matching system fields gains activePro
   assert.equal(flags.expertPerk, boltActionRifle.expertPerk);
   assert.ok(flags.activeProperties.some((p) => p.key === 'rme-disarm'));
 
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+// ---------------------------------------------------------------------------
+// reloadActivityData
+// ---------------------------------------------------------------------------
+
+test('reloadActivityData: a non-magazine weapon returns no reload activities', () => {
+  assert.deepEqual(reloadActivityData(battleAxe, 'proficient'), {});
+  assert.deepEqual(reloadActivityData(shortbow, 'expert'), {});
+  assert.deepEqual(reloadActivityData(claw, 'proficient'), {});
+});
+
+test('reloadActivityData: a magazine rifle at untrained exposes only the full reload', () => {
+  const reload = reloadActivityData(boltActionRifle, 'untrained');
+  assert.deepEqual(Object.keys(reload), [RELOAD_FULL_ID]);
+  const full = reload[RELOAD_FULL_ID];
+  assert.equal(full._id, RELOAD_FULL_ID);
+  assert.equal(full.type, 'utility');
+  assert.equal(full.sort, 1);
+  assert.equal(full.name, 'RME Reload (Action)');
+  assert.deepEqual(full.activation, {
+    type: 'action',
+    value: 1,
+    condition: 'Reload (Action)',
+    override: false,
+  });
+  assert.deepEqual(full.consumption, {
+    targets: [],
+    scaling: { allowed: false, max: '' },
+    spellSlot: false,
+  });
+  assert.deepEqual(full.roll, { formula: '', name: '', prompt: false, visible: false });
+  assert.deepEqual(full.flags, { [FLAGS_KEY]: { reloadOptionId: 'action-full' } });
+  assert.equal(reload[RELOAD_FAST_ID], undefined);
+});
+
+test('reloadActivityData: an expert rifle adds the single-cartridge object-interaction reload', () => {
+  const reload = reloadActivityData(boltActionRifle, 'expert');
+  assert.deepEqual(Object.keys(reload).sort(), [RELOAD_FULL_ID, RELOAD_FAST_ID].sort());
+  const fast = reload[RELOAD_FAST_ID];
+  assert.equal(fast.sort, 2);
+  assert.equal(fast.name, 'RME Reload (Object Interaction (single cartridge))');
+  assert.equal(fast.activation.type, 'special');
+  assert.equal(fast.activation.condition, 'Reload (Object Interaction (single cartridge))');
+  assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'special-single');
+});
+
+test('reloadActivityData: an expert break-action revolver adds a bonus-action reload', () => {
+  const reload = reloadActivityData(breakActionRevolver, 'expert');
+  assert.deepEqual(Object.keys(reload).sort(), [RELOAD_FULL_ID, RELOAD_FAST_ID].sort());
+  const fast = reload[RELOAD_FAST_ID];
+  assert.equal(fast.activation.type, 'bonus');
+  assert.equal(fast.activation.condition, 'Reload (Bonus)');
+  assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'bonus-full');
+});
+
+test('reloadActivityData: repeating crossbow and spinner expose a free reload at every tier', () => {
+  for (const level of ['untrained', 'proficient', 'expert']) {
+    for (const weapon of [repeatingCrossbow, spinner]) {
+      const reload = reloadActivityData(weapon, level);
+      assert.deepEqual(Object.keys(reload).sort(), [RELOAD_FULL_ID, RELOAD_FAST_ID].sort());
+      const fast = reload[RELOAD_FAST_ID];
+      assert.equal(fast.activation.type, 'special');
+      assert.equal(fast.activation.condition, 'Reload (Free)');
+      assert.equal(fast.flags[FLAGS_KEY].reloadOptionId, 'special-full');
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// syncActorItems - reload activities
+// ---------------------------------------------------------------------------
+
+test('syncActorItems: moving off an expert tier removes a stale fast reload idempotently', async () => {
+  const proficient = fullySyncedState(boltActionRifle, 'proficient');
+  const expert = makeItemData(boltActionRifle, 'expert');
+  const items = [
+    {
+      _id: 'dg1',
+      // Module flag metadata is already at proficient, but the activities still
+      // carry the expert fast reload from a prior synced state.
+      flags: proficient.flags,
+      system: { ...proficient.system, activities: expert.system.activities },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const activities = items[0].system.activities;
+  assert.equal(activities[RELOAD_FAST_ID], undefined);
+  assert.ok(activities[RELOAD_FULL_ID]);
+  assert.equal(activities[ATTACK_ID].name, 'Attack');
+
+  // The fast reload is gone, so no further update is issued.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a fully synced magazine weapon stays idempotent', async () => {
+  const rifle = fullySyncedState(boltActionRifle, 'expert');
+  const items = [{ _id: 'id1', flags: rifle.flags, system: rifle.system }];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'expert' } };
+  const updates = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(updates, []);
+  assert.equal(actor.__lastUpdates(), null);
+});
+
+test('syncActorItems: preserves a user activity id while adding reload activities', async () => {
+  const base = fullySyncedState(boltActionRifle, 'proficient');
+  const userActivity = { _id: 'userActivity', type: 'utility', name: 'User Action', sort: 5 };
+  const items = [
+    {
+      _id: 'u1',
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: {
+        ...base.system,
+        activities: { userActivity },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const activities = items[0].system.activities;
+  // The user-defined activity is preserved, and because no attack exists the
+  // module-owned default attack and the full reload are added.
+  assert.deepEqual(activities.userActivity, userActivity);
+  assert.ok(activities[RELOAD_FULL_ID]);
+  assert.equal(activities[RELOAD_FAST_ID], undefined);
+  assert.equal(activities[ATTACK_ID].type, 'attack');
+  assert.deepEqual(
+    Object.keys(activities).sort(),
+    ['userActivity', ATTACK_ID, RELOAD_FULL_ID].sort()
+  );
+});
+
+test('syncActorItems: a legacy rifle with no activities gains the module attack and both reloads, idempotently', async () => {
+  // A legacy bolt-action rifle that carries no activities at all (e.g. an item
+  // authored before the module created reload/attack activities) must, on first
+  // sync, receive the explicit native attack plus the two reload activities.
+  const items = [
+    {
+      _id: 'legacy1',
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: { proficient: 0, weight: { value: 12, units: 'lb' }, price: { value: 1000, denomination: 'gp' } },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'expert' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const activities = items[0].system.activities;
+  assert.ok(activities[ATTACK_ID], 'expected the module default attack activity');
+  assert.equal(activities[ATTACK_ID]._id.length, 16);
+  assert.equal(activities[ATTACK_ID].type, 'attack');
+  assert.equal(activities[ATTACK_ID].name, 'Attack');
+  assert.ok(activities[RELOAD_FULL_ID], 'expected the full reload activity');
+  assert.ok(activities[RELOAD_FAST_ID], 'expected the fast reload activity');
+  assert.deepEqual(
+    Object.keys(activities).sort(),
+    [ATTACK_ID, RELOAD_FULL_ID, RELOAD_FAST_ID].sort()
+  );
+
+  // After the first sync the item is fully synced; a second run writes nothing.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+  assert.equal(actor.__lastUpdates().length, 1);
+});
+
+test('syncActorItems: an actor with a user attack keeps only that attack and is not overridden', async () => {
+  const userAttack = { _id: 'userAtk', type: 'attack', name: 'User Attack', sort: 0 };
+  const items = [
+    {
+      _id: 'ua1',
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: {
+        proficient: 1,
+        activities: { userAtk: userAttack },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const activities = items[0].system.activities;
+  // The user attack is the only attack; the module default is never added on top.
+  assert.deepEqual(activities.userAtk, userAttack);
+  assert.equal(activities[ATTACK_ID], undefined);
+  assert.ok(activities[RELOAD_FULL_ID], 'expected the full reload activity');
+  assert.deepEqual(
+    Object.keys(activities).sort(),
+    ['userAtk', RELOAD_FULL_ID].sort()
+  );
+
+  // Idempotent: the user attack is never replaced and nothing writes again.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('itemProfilePatch: detects a user attack in a live Map and does not add the module default', () => {
+  const userAttack = { _id: 'userAtk', type: 'attack', name: 'User Attack', sort: 0 };
+  const item = {
+    _id: 'map-atk-1',
+    system: {
+      proficient: 1,
+      activities: new Map([['userAtk', userAttack]]),
+    },
+  };
+  const patch = itemProfilePatch(item, boltActionRifle, 'proficient');
+  // The Map exposes a user attack, so the module default attack is not written.
+  assert.equal(patch.system[`activities.${ATTACK_ID}`], undefined);
+  // The full reload is still written through its granular dotted path.
+  assert.ok(patch.system[`activities.${RELOAD_FULL_ID}`]);
+  // No stale fast reload exists, so no deletion operator is written.
+  assert.equal(patch.system[`activities.-=${RELOAD_FAST_ID}`], undefined);
+});
+
+test('syncActorItems: a magazine weapon with matching reload activities in a live Map stays idempotent', async () => {
+  const rifle = fullySyncedState(boltActionRifle, 'expert');
+  const items = [
+    {
+      _id: 'map-synced-1',
+      flags: rifle.flags,
+      system: {
+        ...rifle.system,
+        // Live MappingField/Collection: activities keyed by id in a Map-like.
+        activities: activitiesMap(rifle.system.activities),
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'expert' } };
+
+  const updates = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(updates, []);
+  assert.equal(actor.__lastUpdates(), null);
+});
+
+test('syncActorItems: detects a user attack in a live Map and never adds the module default attack', async () => {
+  const userAttack = { _id: 'userAtk', type: 'attack', name: 'User Attack', sort: 0 };
+  const items = [
+    {
+      _id: 'map-atk-2',
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: {
+        proficient: 1,
+        activities: new Map([['userAtk', userAttack]]),
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const activities = items[0].system.activities;
+  assert.ok(activities instanceof Map);
+  // The user attack is the only attack; the module default is never added on top.
+  assert.deepEqual(activities.get('userAtk'), userAttack);
+  assert.equal(activities.get(ATTACK_ID), undefined);
+  assert.ok(activities.get(RELOAD_FULL_ID), 'expected the full reload activity');
+  assert.equal(activities.get(RELOAD_FAST_ID), undefined);
+
+  // Idempotent: the user attack is never replaced and nothing writes again.
   const second = await syncActorItems(actor, catalog.equipment, training);
   assert.deepEqual(second, []);
 });

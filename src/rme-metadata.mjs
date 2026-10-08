@@ -10,8 +10,10 @@
 // extracted from the tier rows selected by the shared training model.
 //
 // Source reference: rules/WeaponProperties.md lists 42 weapon-property
-// headings (not 40). All of them are exported verbatim, including the ` (#)`
-// parameter placeholder on Firearm/Loading/Unwieldy.
+// headings (not 40). The source headings keep the ` (#)` parameter placeholder
+// on Firearm/Loading/Unwieldy, but RME_PROPERTY_NAMES exports the base display
+// titles (Firearm, Loading, Unwieldy) so property titles never expose the
+// placeholder. Ammunition is an extra RME property with no source heading.
 
 import { LEVELS, selectTier } from './training.mjs';
 
@@ -20,8 +22,11 @@ import { LEVELS, selectTier } from './training.mjs';
 // ---------------------------------------------------------------------------
 
 // Every `##### ` heading in rules/WeaponProperties.md, verbatim and in source
-// order. The ` (#)` suffix on Firearm, Loading, and Unwieldy is a parameter
-// placeholder included exactly as written in the source.
+// order, minus the ` (#)` parameter placeholder that the source carries on
+// Firearm, Loading, and Unwieldy. Property titles expose the base name so the
+// placeholder never appears on a sheet label. Ammunition is an extra RME
+// property that is not a source heading; it is registered for ammo-launching
+// ranged weapons.
 export const RME_PROPERTY_NAMES = [
   'Affixed',
   'Awkward',
@@ -35,13 +40,13 @@ export const RME_PROPERTY_NAMES = [
   'Double Ended',
   'Entangle',
   'Finesse',
-  'Firearm (#)',
+  'Firearm',
   'Heavy',
   'Hipshot',
   'Keen',
   'Knockback',
   'Light',
-  'Loading (#)',
+  'Loading',
   'Lunge',
   'Melee',
   'Natural',
@@ -62,14 +67,17 @@ export const RME_PROPERTY_NAMES = [
   'Thrown',
   'Trip',
   'Two-Handed',
-  'Unwieldy (#)',
+  'Unwieldy',
   'Versatile',
   'Wound',
+  'Ammunition',
 ];
 
 // Property identity: the ` (#)` placeholder marks a numeric parameter, not part
 // of the property name. This is the set used for catalog-token matching and
-// for `tierProperties` labels.
+// for `tierProperties` labels. RME_PROPERTY_NAMES already carries the base
+// titles, so the replacement is a no-op today but is kept defensively so a
+// ` (#)` suffix on a future source heading never leaks into a tier label.
 const PROPERTY_BASE_NAMES = RME_PROPERTY_NAMES.map((name) =>
   name.replace(/\s*\(#\)$/, '')
 );
@@ -248,6 +256,25 @@ export function rmeWeaponType(group) {
 }
 
 // ---------------------------------------------------------------------------
+// Ammunition
+// ---------------------------------------------------------------------------
+
+// Ranged groups whose weapons launch and consume a projectile: bows launch
+// arrows, crossbows launch bolts (including Spinner and Portable Ballista), and
+// firearms launch cartridges. Every weapon in these groups consumes ammo.
+const AMMO_RANGED_GROUPS = new Set(['Bows', 'Crossbows', 'Firearms']);
+
+// Whether a catalog entry is a weapon that launches and consumes ammunition.
+// Group membership excludes shields, armor, natural weapons, and melee groups:
+// none of them belong to Bows/Crossbows/Firearms. Launch Weapons (Atlatl,
+// Blowgun, Sling, Sling Staff, Sling Tube, Portable Catapult, Rope Dart, etc.)
+// are ranged but are not tracked here until compatible ammo items are
+// specified, so none of them carry Ammunition.
+function isAmmoLaunchingWeapon(entry) {
+  return AMMO_RANGED_GROUPS.has(entry.group);
+}
+
+// ---------------------------------------------------------------------------
 // Tier property extraction
 // ---------------------------------------------------------------------------
 
@@ -377,7 +404,8 @@ function normalizeLevel(level) {
 // property grants, so only rows that begin with an explicit (weapon-style)
 // comma-separated property declaration contribute properties; with no such row
 // in the catalog, shields and armor always return []. The keys are guaranteed
-// stable (`rme-<kebab>`) and unique within the result.
+// stable (`rme-<kebab>`) and unique within the result. Ammo-launching ranged
+// weapons additionally get the tier-independent RME Ammunition property.
 export function tierProperties(entry, level) {
   const safeLevel = normalizeLevel(level);
   const tier = selectTier(entry, { items: { [entry.id]: safeLevel } });
@@ -391,5 +419,17 @@ export function tierProperties(entry, level) {
     }
     props.push(...extractPropertiesFromRow(row));
   }
-  return dedupeByLabel(props);
+  const result = dedupeByLabel(props);
+
+  // Ammunition is a tier-independent RME checkbox, not a tier grant, so it is
+  // appended to every ammo-launching weapon at every level. It never
+  // duplicates a tier row (no tier row declares Ammunition) but is guarded
+  // defensively in case a source row ever starts declaring it.
+  if (
+    isAmmoLaunchingWeapon(entry) &&
+    !result.some((p) => p.label === 'Ammunition')
+  ) {
+    result.push({ key: 'rme-ammunition', label: 'Ammunition', raw: 'Ammunition' });
+  }
+  return result;
 }

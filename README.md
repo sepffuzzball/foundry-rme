@@ -46,13 +46,50 @@ missing.
 
 ## Compendium packs
 
-Every release ships three precompiled Foundry compendium packs, so they are
+Every release ships four precompiled Foundry compendium packs, so they are
 available the moment the module is installed - no build step and no catalog
 import is required:
 
 - **RME Weapons** (153 items, including natural weapons)
 - **RME Armor** (12 items)
 - **RME Shields** (8 items)
+- **RME Ammunition** (25 stack items)
+
+The **RME Ammunition** pack is a set of consumable ammunition stacks rather than
+a weapon class. Each stack is a dnd5e consumable with `system.type`
+`{value:'ammo', subtype:'rme-<family>'}` and a per-unit price, so a full stack
+(20 bolts or arrows, or a single Multi-Purpose Launcher round) adds up to the
+user-approved cost. Each stack carries an explicit zero weight and a
+`flags.foundry-rme` block recording its ammo id, family, stack cost, and a
+declarative `effect` object: a plain-text summary plus structured fields such as
+damage type, attack/damage bonus, saving throws, conditions, or payload. The
+catalog is the authoritative source: the module never invents a value. In this
+release a subset of those effects is automated - the approved +1/+2 attack and
+damage bonuses and the elemental extra 1d4 typed damage (fire, cold, poison,
+lightning, acid, thunder) are applied to module-managed ranged attack and
+chat-card damage rolls, and buckshot reduces one base damage die by one when the
+weapon base damage is a simple `NdM` (N>=2) formula. Saves, conditions, area
+bursts, the buckshot cone, and player action economy are still applied by hand
+(see Automation limitations). These stacks are module homebrew defaults, not
+original RME source rule text.
+
+For tagged weapons, the native Item Details RME panel can assign a compatible
+actor-owned reserve stack and reload magazines. Import one of the 25 stack items
+from **RME Ammunition** first (Portable Ballista may also use Javelin). How a
+weapon spends ammunition depends on whether it is direct or magazine-managed.
+Bows and ordinary crossbows spend their assigned reserve directly, one round per
+shot. The Repeating Crossbow (6 bolts) and the Spinner (10 bladed disks) are
+magazine-managed: they transfer rounds from the reserve on reload and spend
+loaded rounds on fire. Firearms with Loading (#) use a magazine of that tier's
+capacity; when no Loading property is present, ammunition is spent directly. The
+Portable Ballista is direct but does not use a consumable
+stack: it spends an ordinary Javelin actor weapon stack, one javelin per shot.
+A magazine weapon exposes loaded/capacity and reload options. Native dnd5e
+ammunition consumption is not used, and turn costs are player enforced.
+Cross-client concurrent shots can race: ammunition state is not coordinated
+across clients (no cross-client atomicity). The +1/+2 and elemental damage
+effects are applied automatically on attacked shots; saves, conditions, area
+bursts, the buckshot cone, and player action economy remain manual.
 
 Open any of these from Foundry's **Compendium** tab. Drag an item onto a
 character sheet (or use the pack's import action) and it opens the native dnd5e
@@ -82,7 +119,7 @@ npm run build:packs
 
 `npm ci` installs the pinned build tooling from the lockfile; `npm run
 build:catalog` regenerates `data/catalog.json` from `rules/`, and `npm run
-build:packs` compiles the three compendium packs (the release ships them
+build:packs` compiles the four compendium packs (the release ships them
 precompiled, but a local checkout does not). Re-run `npm run build:catalog`
 after any change to `rules/`, and `npm run build:packs` after any change to the
 pack definitions. Run the test suite with:
@@ -162,6 +199,19 @@ properties (Hipshot, Keen, Puncture, and so on) are not mapped into dnd5e native
 properties, and the fighting-style and spell/ability rule texts remain reference
 material - all of that stays manual.
 
+The **RME Ammunition** pack follows the same limited-automation rule. Each stack
+carries a declared `flags.foundry-rme.effect` object (damage type, attack/damage
+bonus, saving throws, conditions, or payload) and a descriptive source text.
+Ammunition is consumed on an attack, and a subset of the approved effects is now
+applied automatically: the +1/+2 attack and damage bonuses, the elemental extra
+1d4 typed damage, and - only when the weapon's pertinent base damage is a simple
+`NdM` (N>=2) formula - the buckshot one-fewer-base-die reduction, which leaves
+ambiguous formulas unchanged. Saves, conditions, area bursts, the buckshot cone,
+and player action economy are still applied by hand, because they require
+targeting and permission handling the module does not orchestrate. The
+`flags.foundry-rme.effect` object is reference data the module reads, not a
+guarantee of full automation.
+
 Training derivation is automatic for class, race, feat, and subclass sources
 the module recognizes. It is driven by source-specific rules rather than the
 native dnd5e class advancement: recognized classes are resolved through the RME
@@ -176,14 +226,18 @@ is no starting-class seeding to enable - the choices are prompted directly.
 
 The current release has **not yet been verified by the developer in a live
 Foundry world**. The automated test suite exercises the pure logic and the
-runtime API surface, but real Foundry/dnd5e rendering and actor interactions are
+runtime API surface, but real Foundry/dnd5e rendering and actor interactions -
+including the new ammunition attack/damage automation on a real chat card - are
 not covered by it. A user report indicates the module was installed and ran
-under a prior release, but this release remains unverified.
+under a prior release, but this release remains unverified. Cross-client
+concurrent shots are not atomic: ammunition state is not coordinated across
+clients.
 
 ## Repository contents
 
 - `rules/` - source markdown for the equipment catalog and references, included intentionally. Editing these is how you change the catalog.
 - `data/catalog.json` - the generated catalog, committed intentionally so the module runs without requiring a build step on install.
+- `data/ammunition.json` - the ammunition stack source (25 consumable entries) that the `build:packs` step compiles into the RME Ammunition pack.
 - `src/`, `tests/`, `scripts/`, `styles/`, `module.json` - the module code, tests, catalog build script, styles, and manifest.
 - `graphify-out/` - the local graphify knowledge-graph output. It is **ignored** (see `.gitignore`) and not part of the published module; regenerate it locally with `graphify update .` if you use it.
 
@@ -222,9 +276,9 @@ Each release provides two assets:
   at the `latest` download URL and always reflects the newest release.
 - `foundry-rme.zip` - the installable module archive, with `module.json` at the
   archive root (not under a `package/` folder) as Foundry requires. It embeds the
-  three precompiled compendium packs (`packs/weapons`, `packs/armor`,
-  `packs/shields`) as LevelDB directories, so they are usable immediately on
-  install.
+  four precompiled compendium packs (`packs/weapons`, `packs/armor`,
+  `packs/shields`, `packs/ammunition`) as LevelDB directories, so they are usable
+  immediately on install.
 
 The tracked `module.json` in the repository is never modified by the release
 process; the `manifest` and `download` fields are stamped only into the staged

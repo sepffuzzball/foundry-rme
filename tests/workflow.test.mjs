@@ -102,8 +102,8 @@ test('workflow verifies the archive root, catalog, and compendium packs via unzi
   );
   // The archived compendium packs and their LevelDB records must be verified.
   assert.ok(
-    text.includes("['weapons', 'armor', 'shields']"),
-    'must iterate the three compiled packs'
+    text.includes("['weapons', 'armor', 'shields', 'ammunition']"),
+    'must iterate the four compiled packs'
   );
   assert.ok(
     text.includes('listing.includes(`${prefix}CURRENT`)'),

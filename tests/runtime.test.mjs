@@ -25,7 +25,37 @@ const {
 import { deriveActorTraining } from '../src/derive-training.mjs';
 
 const catalog = JSON.parse(await readFile(new URL('../data/catalog.json', import.meta.url), 'utf8'));
+const ammoCatalog = JSON.parse(await readFile(new URL('../data/ammunition.json', import.meta.url), 'utf8'));
 const EIGHT = ['Axes', 'Bows', 'Combat Blades', 'Dueling Blades', 'Flails', 'Hammers Picks', 'Spears', 'Whips'];
+
+// A fetch mock that routes each module catalog request to its own fixture so the
+// equipment catalog and the ammunition catalog are never confused.
+function makeFetchMock({ catalogData = catalog, ammoData = ammoCatalog } = {}) {
+  return async (url) => {
+    const path = String(url);
+    if (path.includes('data/catalog.json')) return { ok: true, json: async () => catalogData };
+    if (path.includes('data/ammunition.json')) return { ok: true, json: async () => ammoData };
+    return { ok: false, status: 404 };
+  };
+}
+
+// Run the ready-time preload so the module-level catalog and ammoCatalog populate.
+// The fire-and-forget fetches settle on a tick; after this the module caches
+// remain populated for the rest of the suite.
+async function primeAmmoCatalogs() {
+  const originalFetch = globalThis.fetch;
+  const originalGame = globalThis.game;
+  globalThis.fetch = makeFetchMock();
+  globalThis.game = { rme: undefined };
+  try {
+    const ready = hookRegistrations.find((r) => r.scope === 'once' && r.name === 'ready').handler;
+    ready();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.game = originalGame;
+  }
+}
 
 test('module manifest targets Foundry 14 and dnd5e 6', async () => {
   const manifest = JSON.parse(await readFile(new URL('../module.json', import.meta.url)));
@@ -52,6 +82,25 @@ test('runtime uses v14 DialogV2 and exposes actor-sheet catalog access without a
   assert.match(source, /action:'rme-catalog',label:'RME Catalog',icon:/);
   assert.match(source, /data-rme-import-all/);
   assert.match(source, /data-rme-import-actor/);
+});
+
+test('ammo hooks do not throw before the ready-time catalogs are loaded', () => {
+  // At import the module-level catalog and ammoCatalog are both null, and the
+  // `foundry` dice terms globals are absent; firing the ammo hooks in that state
+  // must warn/skip and never throw (no global error on pre-ready events).
+  const hook = (name) => hookRegistrations.find((r) => r.scope === 'on' && r.name === name).handler;
+  const config = {};
+  const message = { data: {} };
+  assert.doesNotThrow(() => hook('dnd5e.preUseActivity')(null, config, config, config));
+  assert.doesNotThrow(() => hook('dnd5e.activityConsumption')(null, config, config, { item: [] }));
+  assert.equal(
+    hook('dnd5e.postAttackRollConfiguration')([], config, config, message),
+    true,
+    'a pre-ready attack config allows the native roll'
+  );
+  assert.equal(hook('dnd5e.preRollDamage')(config, config, message), undefined, 'pre-ready damage hook silently skips');
+  assert.doesNotThrow(() => hook('dnd5e.rollAttack')([], config));
+  assert.doesNotThrow(() => hook('dnd5e.postRollAttack')([], config));
 });
 
 test('training dialog is source-derived and exposes source gaps and choice controls', async () => {
@@ -279,7 +328,7 @@ test('scheduler coalesces per-actor triggers and applies derived training once',
   const originalFetch = globalThis.fetch;
   let scheduled = 0;
   globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
-  globalThis.fetch = async () => ({ ok: true, json: async () => catalog });
+  globalThis.fetch = makeFetchMock();
   try {
     const classItem = { _id: 'c1', type: 'class', name: 'Fighter', system: { classIdentifier: 'fighter', advancement: [] } };
     const catalogItem = { _id: 'i1', type: 'weapon', name: 'Battle Axe', flags: { 'foundry-rme': { catalogId: 'axes/battle-axe' } }, system: { proficient: 0 } };
@@ -318,7 +367,7 @@ test('scheduler does not schedule a sync for a non-owner actor', async () => {
 
 test('queueActorSync reruns once after an in-progress sync when provider/training events arrive', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, json: async () => catalog });
+  globalThis.fetch = makeFetchMock();
   try {
     const actor = makeDeferredActor();
     actor.setFlag('foundry-rme', 'choices', { c1: { groups: EIGHT } });
@@ -342,7 +391,7 @@ test('tagged catalog item writes do not re-arm the scheduler, so a sync terminat
   const originalFetch = globalThis.fetch;
   let scheduled = 0;
   globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
-  globalThis.fetch = async () => ({ ok: true, json: async () => catalog });
+  globalThis.fetch = makeFetchMock();
   try {
     const classItem = { _id: 'c1', type: 'class', name: 'Fighter', system: { classIdentifier: 'fighter', advancement: [] } };
     const taggedItem = { _id: 'i1', type: 'weapon', name: 'Battle Axe', flags: { 'foundry-rme': { catalogId: 'axes/battle-axe' } }, system: { proficient: 0 } };
@@ -425,4 +474,154 @@ test('init hook logs a warning and does not throw when CONFIG.DND5E is missing',
     console.warn = originalWarn;
     globalThis.CONFIG = originalConfig;
   }
+});
+
+// ---------------------------------------------------------------------------
+// Module-managed ammunition
+// ---------------------------------------------------------------------------
+
+test('registers the module-managed ammunition hooks', () => {
+  const registered = new Map();
+  for (const { scope, name, handler } of hookRegistrations) {
+    if (scope === 'on' && typeof handler === 'function') registered.set(name, handler);
+  }
+  for (const name of [
+    'dnd5e.preUseActivity',
+    'dnd5e.activityConsumption',
+    'dnd5e.postAttackRollConfiguration',
+    'dnd5e.rollAttack',
+    'dnd5e.postRollAttack',
+    'dnd5e.preRollDamage',
+  ]) {
+    assert.equal(typeof registered.get(name), 'function', `expected a ${name} hook to be registered`);
+  }
+});
+
+test('ready handler exposes the game.rme ammunition API and preserves existing methods', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = makeFetchMock();
+  const originalGame = globalThis.game;
+  globalThis.game = { rme: undefined };
+  try {
+    const ready = hookRegistrations.find((r) => r.scope === 'once' && r.name === 'ready').handler;
+    ready();
+    for (const name of ['assignAmmo', 'reloadAmmo', 'getAmmoState', 'getAmmoEffect']) {
+      assert.equal(typeof globalThis.game.rme[name], 'function', `expected game.rme.${name} to be a function`);
+    }
+    for (const name of ['openCatalog', 'openTraining', 'importCatalog', 'syncActorItems', 'getTraining', 'syncActor']) {
+      assert.equal(typeof globalThis.game.rme[name], 'function', `existing service method ${name} must be preserved`);
+    }
+    // Give the fire-and-forget catalog preload a tick to settle without throwing.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const effect = await globalThis.game.rme.getAmmoEffect('arrow/plus-1-arrows');
+    assert.equal(effect?.attackBonus, 1, 'getAmmoEffect returns the approved +1 effect descriptor');
+    assert.equal(effect?.damageBonus, 1, 'getAmmoEffect returns the approved +1 damage descriptor');
+  } finally {
+    globalThis.game = originalGame;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Ammo-roll wiring (bonus / damage application)
+// ---------------------------------------------------------------------------
+
+// A tagged, module-managed bow weapon on an owned actor, optionally carrying a
+// compatible +1 arrow reserve stack. The weapon id 'bows/compound-bow' is an
+// RME Bows entry (ammoFamily 'arrow', capacity 0 / direct consumption).
+function makeSupportedBowActor({ withAmmo = false, ammoId = 'arrow/plus-1-arrows', quantity = 20 } = {}) {
+  const weapon = {
+    _id: 'w1',
+    type: 'weapon',
+    name: 'Compound Bow',
+    flags: {
+      'foundry-rme': {
+        catalogId: 'bows/compound-bow',
+        ammunition: { reserveItemId: withAmmo ? 'ammo1' : null, loaded: 0, loadedAmmoId: null },
+      },
+    },
+  };
+  const items = [weapon];
+  if (withAmmo) {
+    items.push({
+      _id: 'ammo1',
+      type: 'consumable',
+      name: '+1 Arrows',
+      flags: { 'foundry-rme': { ammoId, family: 'arrow' } },
+      system: { quantity },
+    });
+  }
+  const actor = makeActor({ items, originalClass: null });
+  const activity = { type: 'attack', actor, item: weapon };
+  const config = { subject: activity, attackMode: 'ranged' };
+  return { actor, weapon, activity, config };
+}
+
+const ammoHook = (name) => hookRegistrations.find((r) => r.scope === 'on' && r.name === name).handler;
+
+test('postAttackRollConfiguration blocks without bonus when the ammo gate fails', async () => {
+  await primeAmmoCatalogs();
+  const { config } = makeSupportedBowActor({ withAmmo: false });
+  const rolls = [{ terms: [{ kind: 'base' }], evaluated: false, options: { attackMode: 'ranged' } }];
+  const result = ammoHook('dnd5e.postAttackRollConfiguration')(rolls, config, {}, { data: {} });
+  assert.equal(result, false, 'a shot with no valid ammo blocks the roll');
+  assert.equal(rolls[0].terms.length, 1, 'no +1 bonus is applied when the roll is blocked');
+  assert.equal(rolls[0].options.rmeAmmoApplied, undefined, 'the blocked roll is not marked as ammo-applied');
+});
+
+test('postAttackRollConfiguration applies the +1 attack bonus and provenance when ammo is available', async () => {
+  await primeAmmoCatalogs();
+  const originalFoundry = globalThis.foundry;
+  const terms = [];
+  class OperatorTerm {
+    constructor(arg) { this.kind = 'operator'; this.operator = arg.operator; terms.push(['operator', arg.operator]); }
+  }
+  class NumericTerm {
+    constructor(arg) { this.kind = 'number'; this.number = arg.number; this.options = arg.options; terms.push(['number', arg.number]); }
+  }
+  globalThis.foundry = { dice: { terms: { OperatorTerm, NumericTerm } } };
+  try {
+    const { config } = makeSupportedBowActor({ withAmmo: true });
+    const rolls = [{ terms: [{ kind: 'base' }], evaluated: false, options: { attackMode: 'ranged' }, resetFormula() {} }];
+    const message = { data: {} };
+    const result = ammoHook('dnd5e.postAttackRollConfiguration')(rolls, config, {}, message);
+    assert.equal(result, true, 'an available shot is allowed');
+    assert.deepEqual(terms, [['operator', '+'], ['number', 1]], 'the +1 operator and numeric terms are appended');
+    assert.equal(rolls[0].options.rmeAmmoApplied, true, 'the roll is marked to avoid a duplicate application');
+    assert.equal(rolls[0].terms.length, 3, 'the base term is preserved and two bonus terms are appended');
+    const flags = message.data.flags['foundry-rme'];
+    assert.equal(flags.ammoId, 'arrow/plus-1-arrows', 'chat provenance carries the ammo id');
+    assert.equal(flags.ammoEffectText, 'Grants a +1 bonus to attack and damage rolls.', 'chat provenance carries the effect text');
+  } finally {
+    globalThis.foundry = originalFoundry;
+  }
+});
+
+test('preRollDamage applies approved damage additions and chat provenance', async () => {
+  await primeAmmoCatalogs();
+  const { activity } = makeSupportedBowActor({ withAmmo: true });
+  const config = {
+    subject: activity,
+    rolls: [{ parts: ['1d8'] }],
+    ammunition: { flags: { 'foundry-rme': { ammoId: 'arrow/plus-1-arrows' } } },
+  };
+  const message = { data: {} };
+  ammoHook('dnd5e.preRollDamage')(config, {}, message);
+  assert.deepEqual(config.rolls[0].parts, ['1d8', '1'], 'the flat +1 damage bonus is appended as a plain numeric part');
+  assert.equal(config.rmeAmmoDamageApplied, true, 'the config is marked applied');
+  assert.equal(message.data.flags['foundry-rme'].ammoId, 'arrow/plus-1-arrows', 'chat provenance carries the ammo id');
+});
+
+test('preRollDamage does not double-apply ammo damage', async () => {
+  await primeAmmoCatalogs();
+  const { activity } = makeSupportedBowActor({ withAmmo: true });
+  const config = {
+    subject: activity,
+    rolls: [{ parts: ['1d8'] }],
+    ammunition: { flags: { 'foundry-rme': { ammoId: 'arrow/plus-1-arrows' } } },
+  };
+  const hook = ammoHook('dnd5e.preRollDamage');
+  hook(config, {}, { data: {} });
+  hook(config, {}, { data: {} });
+  assert.deepEqual(config.rolls[0].parts, ['1d8', '1'], 'the damage addition is not applied twice');
 });

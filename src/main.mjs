@@ -4,9 +4,22 @@ import { makeItemData, syncActorItems } from './items.mjs';
 import { computeActorTraining, syncActorRme } from './actor-training.mjs';
 import { deriveActorTraining } from './derive-training.mjs';
 import { renderRmeItemDetails } from './item-sheet.mjs';
+import {
+  assignActorAmmo,
+  reloadActorAmmo,
+  getAmmoState,
+  handlePreUseActivity,
+  handleActivityConsumption,
+  handlePostAttackRollConfiguration,
+  handleRollAttack,
+  handlePostRollAttack,
+} from './ammo-runtime.mjs';
+import { handleAmmoAttackRoll, handleAmmoDamageConfig } from './ammo-rolls.mjs';
+import { ammoEffect } from './ammo-effects.mjs';
 
 const ID = 'foundry-rme';
 let catalog;
+let ammoCatalog;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const notifyError = (error) => { console.error(`[${ID}]`, error); globalThis.ui?.notifications?.error(error?.message || String(error)); };
 const readTraining = (actor) => actor.getFlag(ID, 'training') || {};
@@ -73,6 +86,19 @@ async function fetchCatalog() {
   catalog = await response.json();
   return catalog;
 }
+
+// The ammunition catalog is memoized like fetchCatalog but kept separate from the
+// equipment catalog so the two can be at different readiness states. Both are
+// preloaded at ready alongside one another (see the ready handler).
+async function fetchAmmoCatalog() {
+  if (ammoCatalog) return ammoCatalog;
+  const response = await fetch('modules/foundry-rme/data/ammunition.json');
+  if (!response.ok) throw new Error(`Ammunition catalog request failed (${response.status})`);
+  ammoCatalog = await response.json();
+  return ammoCatalog;
+}
+
+const ammoCatalogRef = () => ammoCatalog ?? null;
 
 // ---------------------------------------------------------------------------
 // Automatic training sync
@@ -262,7 +288,18 @@ export async function openTraining(actor) {
 }
 
 Hooks.once('ready',()=>{
-  game.rme={openCatalog,openTraining,importCatalog,syncActorItems,getTraining,syncActor};
+  // Preload the catalogs so the synchronous ammo hooks can use them; a failure is
+  // non-fatal (hooks warn once and let the native roll proceed).
+  fetchCatalog().catch(notifyError);
+  fetchAmmoCatalog().catch(notifyError);
+  // Module-managed ammunition API. Each method fetches the relevant catalog
+  // (cached) before operating, and preserves the existing service methods.
+  game.rme={openCatalog,openTraining,importCatalog,syncActorItems,getTraining,syncActor,
+    assignAmmo: async (actor,weaponId,ammoItemId)=>{ const equipment=(await fetchCatalog()).equipment; return assignActorAmmo(actor,weaponId,ammoItemId,equipment); },
+    reloadAmmo: async (actor,weaponId,optionId)=>{ const equipment=(await fetchCatalog()).equipment; return reloadActorAmmo(actor,weaponId,optionId,equipment); },
+    getAmmoState: async (actor,weaponId)=>{ const equipment=(await fetchCatalog()).equipment; return getAmmoState(actor,weaponId,equipment); },
+    getAmmoEffect: async (ammoId)=>{ const catalog=await fetchAmmoCatalog(); return ammoEffect(ammoId,catalog); },
+  };
   Hooks.on('getHeaderControlsApplicationV2',(app,controls)=>{
     const ActorSheet = foundry.applications.sheets.ActorSheetV2;
     if (!(app instanceof ActorSheet)) return;
@@ -291,3 +328,43 @@ Hooks.on('deleteItem',(item)=>{ if (shouldSyncItem(item)) queueActorSync(itemPar
 Hooks.on('updateItem',(item)=>{ if (shouldSyncItemUpdate(item)) queueActorSync(itemParentActor(item)); });
 Hooks.on('updateActor',(actor,data)=>{ if (shouldSyncActorUpdate(data)) queueActorSync(actor); });
 Hooks.on('createActor',(actor)=>{ if (hasProviderItems(actor)) queueActorSync(actor); });
+
+// ---------------------------------------------------------------------------
+// Module-managed ammunition: reload utility gates, attack ammo spend, and the
+// ammo-roll modifier layer.
+//
+// The cached catalogs are consulted synchronously (via ammoEquipment /
+// ammoCatalogRef) so the hooks fire even before the ready-time fetch settles;
+// when a catalog is not yet available the hooks allow the native roll/reload and
+// warn once. The ammo-roll layer sits AFTER the ammo feasibility gate: it never
+// blocks a roll and never spends ammunition - it only attaches provenance and
+// applies the approved +1/+2 attack/damage and elemental damage additions.
+// ---------------------------------------------------------------------------
+const ammoEquipment = () => catalog?.equipment ?? null;
+Hooks.on('dnd5e.preUseActivity', (activity, usageConfig, dialogConfig, messageConfig) =>
+  handlePreUseActivity(activity, usageConfig, dialogConfig, messageConfig, ammoEquipment()));
+Hooks.on('dnd5e.activityConsumption', (activity, usageConfig, messageConfig, updates) =>
+  handleActivityConsumption(activity, usageConfig, messageConfig, updates, ammoEquipment()));
+// The attack configuration hook first runs the ammo feasibility gate. If the gate
+// blocks the roll (no valid ammo) it returns false and no bonus is applied. If
+// the gate allows the roll, the cached ammo catalog (when present) lets the
+// ammo-roll layer attach provenance and apply the approved attack bonus; when the
+// catalog is unavailable the effect is skipped but the ammo gate is never altered.
+Hooks.on('dnd5e.postAttackRollConfiguration', (rolls, config, dialog, message) => {
+  const equipment = ammoEquipment();
+  const gate = handlePostAttackRollConfiguration(rolls, config, dialog, message, equipment);
+  if (gate === false) return false;
+  const ammo = ammoCatalogRef();
+  if (ammo) handleAmmoAttackRoll(rolls, config, dialog, message, equipment, ammo);
+  return true;
+});
+// Synchronous damage-config hook: the approved damage additions are applied only
+// when both catalogs are cached (no async work inside the hook). When either is
+// missing the damage roll proceeds natively.
+Hooks.on('dnd5e.preRollDamage', (config, dialog, message) => {
+  const equipment = ammoEquipment();
+  const ammo = ammoCatalogRef();
+  if (equipment && ammo) handleAmmoDamageConfig(config, dialog, message, equipment, ammo);
+});
+Hooks.on('dnd5e.rollAttack', (rolls, data) => handleRollAttack(rolls, data, ammoEquipment()));
+Hooks.on('dnd5e.postRollAttack', (rolls, data) => handlePostRollAttack(rolls, data, ammoEquipment()));
