@@ -141,6 +141,15 @@ silently: what it sees and cannot map is surfaced for manual review. Save
 persists both training and provider-keyed choices and synchronizes supported
 module-owned fields.
 
+Tagged catalog Items also show an additive **RME Equipment** panel in the
+native dnd5e item Details tab. It displays the effective tier, RME properties,
+and all three source profiles without replacing native Proficiency or Mastery.
+On an owned actor's Item, **Manual item training** sets an item override;
+**Inherit** removes it. World Items and compendium previews use a non-persistent
+tier selector (compendium Items remain read-only). RME properties are reference
+information available while equipped, not tactical automation; the source item
+description and native mastery remain unchanged.
+
 The catalog view contains all 173 equipment entries and 24 reference sections. Source markdown is displayed as escaped preformatted text, not interpreted HTML.
 
 ## Automation limitations

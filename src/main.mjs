@@ -1,7 +1,9 @@
 import { LEVELS, resolveTraining } from './training.mjs';
+import { registerRmeConfig } from './rme-config.mjs';
 import { makeItemData, syncActorItems } from './items.mjs';
 import { computeActorTraining, syncActorRme } from './actor-training.mjs';
 import { deriveActorTraining } from './derive-training.mjs';
+import { renderRmeItemDetails } from './item-sheet.mjs';
 
 const ID = 'foundry-rme';
 let catalog;
@@ -270,11 +272,20 @@ Hooks.once('ready',()=>{
   });
 });
 
-Hooks.on('init',()=>{
+Hooks.once('init',()=>{
+  if (CONFIG?.DND5E) registerRmeConfig(CONFIG.DND5E);
+  else console.warn(`[${ID}] CONFIG.DND5E is unavailable; RME weapon types and properties were not registered.`);
   if(!globalThis.foundry?.applications?.api?.DialogV2) console.warn(`[${ID}] DialogV2 is unavailable; verify Foundry v14.`);
 });
 
 const itemParentActor = (item) => item?.parent;
+Hooks.on('renderApplicationV2', (app, element) => {
+  const item = app?.document;
+  if (item?.documentName !== 'Item' || !item.flags?.[ID]?.catalogId) return;
+  const details = element?.querySelector?.('section[data-tab="details"]');
+  if (!details || details.querySelector('[data-rme-item-panel]')) return;
+  fetchCatalog().then((data) => renderRmeItemDetails(app, element, data)).catch(notifyError);
+});
 Hooks.on('createItem',(item)=>{ if (shouldSyncItem(item)) queueActorSync(itemParentActor(item)); });
 Hooks.on('deleteItem',(item)=>{ if (shouldSyncItem(item)) queueActorSync(itemParentActor(item)); });
 Hooks.on('updateItem',(item)=>{ if (shouldSyncItemUpdate(item)) queueActorSync(itemParentActor(item)); });

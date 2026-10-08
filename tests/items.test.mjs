@@ -10,6 +10,7 @@ import {
   syncActorItems,
   FLAGS_KEY,
 } from '../src/items.mjs';
+import { tierProperties } from '../src/rme-metadata.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(
@@ -28,6 +29,8 @@ const lightCrossbow = entry('crossbows/light-crossbow');
 const buckler = entry('shields/buckler');
 const chainShirt = entry('armor/chain-shirt');
 const claw = entry('natural-weapons/claw');
+const tail = entry('natural-weapons/tail');
+const boltActionRifle = entry('firearms/bolt-action-rifle');
 
 // Synthetic malformed-mode entries used to exercise the conservative parser.
 const twoMeleeWeapon = {
@@ -100,20 +103,37 @@ const rangedThenMelee = {
   ],
 };
 
+// The module-owned flag block an entry should carry at a resolved level. Used to
+// assert that makeItemData / itemProfilePatch write the expected flag metadata.
+function expectedFlags(entryLike, level) {
+  const normalized = level === 'basic' ? 'proficient' : level;
+  return {
+    catalogId: entryLike.id,
+    group: entryLike.group,
+    activeTier: normalized,
+    activeProperties: tierProperties(entryLike, normalized),
+    expertPerk: entryLike.expertPerk || null,
+  };
+}
+
+function propsOf(entryLike, level) {
+  return tierProperties(entryLike, level).map((p) => p.key);
+}
+
 // ---------------------------------------------------------------------------
 // makeItemData - battle axe (melee weapon)
 // ---------------------------------------------------------------------------
 
-test('makeItemData: battle axe maps to a simple melee weapon at proficient', () => {
+test('makeItemData: battle axe maps to the RME melee category with stats and flags', () => {
   const data = makeItemData(battleAxe, 'proficient');
   assert.equal(data.name, 'Battle Axe');
   assert.equal(data.type, 'weapon');
-  assert.deepEqual(data.flags[FLAGS_KEY], {
-    catalogId: 'axes/battle-axe',
-    group: 'Axes',
-  });
-  assert.equal(data.system.type.value, 'simpleM');
+  assert.deepEqual(data.flags[FLAGS_KEY], expectedFlags(battleAxe, 'proficient'));
+  assert.equal(data.system.type.value, 'rmeAxes');
   assert.equal(data.system.proficient, 1);
+  assert.deepEqual(data.system.weight, { value: 4, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 10, denomination: 'gp' });
+  assert.deepEqual(data.system.properties, propsOf(battleAxe, 'proficient'));
   assert.deepEqual(data.system.damage.base, {
     number: 1,
     denomination: 8,
@@ -131,13 +151,13 @@ test('makeItemData: battle axe maps to a simple melee weapon at proficient', () 
 test('makeItemData: battle axe default level is untrained (proficient 0)', () => {
   const data = makeItemData(battleAxe);
   assert.equal(data.system.proficient, 0);
-  assert.equal(data.system.type.value, 'simpleM');
+  assert.equal(data.system.type.value, 'rmeAxes');
 });
 
 test('makeItemData: an unknown level falls back to untrained', () => {
   const data = makeItemData(battleAxe, 'master');
   assert.equal(data.system.proficient, 0);
-  assert.equal(data.system.type.value, 'simpleM');
+  assert.equal(data.system.type.value, 'rmeAxes');
 });
 
 test('makeItemData: expert level maps the expert damage token', () => {
@@ -155,11 +175,14 @@ test('makeItemData: expert level maps the expert damage token', () => {
 // makeItemData - ranged weapons
 // ---------------------------------------------------------------------------
 
-test('makeItemData: shortbow maps to a simple ranged weapon with range', () => {
+test('makeItemData: shortbow maps to the RME bows category with range and physical stats', () => {
   const data = makeItemData(shortbow, 'proficient');
   assert.equal(data.type, 'weapon');
-  assert.equal(data.system.type.value, 'simpleR');
+  assert.equal(data.system.type.value, 'rmeBows');
   assert.equal(data.system.proficient, 1);
+  assert.deepEqual(data.system.weight, { value: 2, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 25, denomination: 'gp' });
+  assert.deepEqual(data.system.properties, propsOf(shortbow, 'proficient'));
   assert.deepEqual(data.system.damage.base, {
     number: 1,
     denomination: 6,
@@ -172,7 +195,7 @@ test('makeItemData: shortbow maps to a simple ranged weapon with range', () => {
 
 test('makeItemData: light crossbow maps a single +3 ranged token to base damage', () => {
   const data = makeItemData(lightCrossbow, 'proficient');
-  assert.equal(data.system.type.value, 'simpleR');
+  assert.equal(data.system.type.value, 'rmeCrossbows');
   assert.equal(data.system.proficient, 1);
   assert.deepEqual(data.system.damage.base, {
     number: 1,
@@ -187,31 +210,40 @@ test('makeItemData: light crossbow maps a single +3 ranged token to base damage'
 // makeItemData - shield and armor
 // ---------------------------------------------------------------------------
 
-test('makeItemData: shield maps to equipment with shield type and AC bonus', () => {
+test('makeItemData: shield maps to equipment with shield type, AC bonus, and physical stats', () => {
   const data = makeItemData(buckler, 'proficient');
   assert.equal(data.type, 'equipment');
   assert.equal(data.system.type.value, 'shield');
   assert.equal(data.system.proficient, 1);
   assert.equal(data.system.armor.value, 1);
+  assert.deepEqual(data.system.weight, { value: 2, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 5, denomination: 'gp' });
   assert.equal(data.system.damage, undefined);
+  assert.equal(data.system.properties, undefined);
   assert.equal(data.system.activities, undefined);
 });
 
-test('makeItemData: armor maps to equipment with an inferred category and numeric AC', () => {
+test('makeItemData: armor maps to equipment with an inferred category, numeric AC, and physical stats', () => {
   const data = makeItemData(chainShirt, 'proficient');
   assert.equal(data.type, 'equipment');
   assert.equal(data.system.type.value, 'medium');
   assert.equal(data.system.proficient, 1);
   assert.equal(data.system.armor.value, 13);
+  assert.deepEqual(data.system.weight, { value: 10, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 50, denomination: 'gp' });
 });
 
-test('makeItemData: armor category is an explicit name lookup', () => {
+test('makeItemData: armor category is an explicit name lookup with parsed physical stats', () => {
   const leather = makeItemData(entry('armor/leather'), 'proficient');
   const plate = makeItemData(entry('armor/plate'), 'proficient');
   assert.equal(leather.system.type.value, 'light');
   assert.equal(leather.system.armor.value, 11);
+  assert.deepEqual(leather.system.weight, { value: 5, units: 'lb' });
+  assert.deepEqual(leather.system.price, { value: 10, denomination: 'gp' });
   assert.equal(plate.system.type.value, 'heavy');
   assert.equal(plate.system.armor.value, 18);
+  assert.deepEqual(plate.system.weight, { value: 40, units: 'lb' });
+  assert.deepEqual(plate.system.price, { value: 1500, denomination: 'gp' });
 });
 
 // ---------------------------------------------------------------------------
@@ -224,6 +256,8 @@ test('makeItemData: two melee tokens are ambiguous and suppressed', () => {
   assert.equal(data.system.damage, undefined);
   assert.equal(data.system.range, undefined);
   assert.deepEqual(data.system.activities, {});
+  assert.deepEqual(data.system.weight, { value: 1, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 1, denomination: 'gp' });
 });
 
 test('makeItemData: a mixed melee/ranged row is ambiguous and sets no range', () => {
@@ -245,13 +279,16 @@ test('makeItemData: a melee keyword with no die stays melee without base damage'
 // makeItemData - natural weapons and XSS
 // ---------------------------------------------------------------------------
 
-test('makeItemData: natural weapons use the natural type and suppress activities', () => {
+test('makeItemData: natural weapons use the natural type, suppress activities, and get no physical stats', () => {
   const data = makeItemData(claw, 'proficient');
   assert.equal(data.type, 'weapon');
   assert.equal(data.system.type.value, 'natural');
   assert.equal(data.system.proficient, 1);
   assert.equal(data.system.damage, undefined);
   assert.deepEqual(data.system.activities, {});
+  assert.equal(data.system.weight, undefined);
+  assert.equal(data.system.price, undefined);
+  assert.deepEqual(data.system.properties, propsOf(claw, 'proficient'));
 });
 
 test('makeItemData: escapes HTML in the description and wraps it in <pre>', () => {
@@ -266,6 +303,63 @@ test('makeItemData: escapes HTML in the description and wraps it in <pre>', () =
 });
 
 // ---------------------------------------------------------------------------
+// makeItemData - RME category / properties / physical stats
+// ---------------------------------------------------------------------------
+
+test('makeItemData: bolt-action rifle carries parsed physical stats and the RME firearms type', () => {
+  const data = makeItemData(boltActionRifle, 'untrained');
+  assert.equal(data.system.type.value, 'rmeFirearms');
+  assert.deepEqual(data.system.weight, { value: 12, units: 'lb' });
+  assert.deepEqual(data.system.price, { value: 1000, denomination: 'gp' });
+  assert.deepEqual(data.flags[FLAGS_KEY], expectedFlags(boltActionRifle, 'untrained'));
+});
+
+test('makeItemData: bolt-action rifle at untrained surfaces the Awkward property', () => {
+  const data = makeItemData(boltActionRifle, 'untrained');
+  assert.ok(data.system.properties.includes('rme-awkward'));
+  assert.ok(data.flags[FLAGS_KEY].activeProperties.some((p) => p.label === 'Awkward'));
+});
+
+test('makeItemData: bolt-action rifle at Basic drops Awkward and maps the 2d8 (200/800) profile', () => {
+  const basic = makeItemData(boltActionRifle, 'basic');
+  const proficient = makeItemData(boltActionRifle, 'proficient');
+  assert.equal(basic.flags[FLAGS_KEY].activeTier, 'proficient');
+  assert.ok(!basic.system.properties.includes('rme-awkward'));
+  assert.deepEqual(basic.system.damage.base, {
+    number: 2,
+    denomination: 8,
+    bonus: '',
+    types: ['piercing'],
+  });
+  assert.deepEqual(basic.system.range, { value: 200, long: 800, units: 'ft' });
+  // "basic" is an alias for the Basic/Proficient tier.
+  assert.deepEqual(basic.system.properties, proficient.system.properties);
+});
+
+test('makeItemData: bolt-action rifle at Expert grants Disarm, the 2d8 (250/1000) profile, and the perk', () => {
+  const data = makeItemData(boltActionRifle, 'expert');
+  assert.ok(data.system.properties.includes('rme-disarm'));
+  assert.deepEqual(data.system.damage.base, {
+    number: 2,
+    denomination: 8,
+    bonus: '',
+    types: ['piercing'],
+  });
+  assert.deepEqual(data.system.range, { value: 250, long: 1000, units: 'ft' });
+  assert.equal(data.flags[FLAGS_KEY].activeTier, 'expert');
+  assert.equal(data.flags[FLAGS_KEY].expertPerk, boltActionRifle.expertPerk);
+});
+
+test('makeItemData: natural weapons never fabricate weight or price at any level', () => {
+  const clawData = makeItemData(claw, 'expert');
+  const tailData = makeItemData(tail, 'expert');
+  assert.equal(clawData.system.weight, undefined);
+  assert.equal(clawData.system.price, undefined);
+  assert.equal(tailData.system.weight, undefined);
+  assert.equal(tailData.system.price, undefined);
+});
+
+// ---------------------------------------------------------------------------
 // itemProfilePatch
 // ---------------------------------------------------------------------------
 
@@ -276,10 +370,15 @@ test('itemProfilePatch: weapon returns only module-owned fields', () => {
     _id: 'item-1',
     system: {
       proficient: 1,
+      type: { value: 'rmeAxes' },
+      properties: propsOf(battleAxe, 'proficient'),
+      weight: { value: 4, units: 'lb' },
+      price: { value: 10, denomination: 'gp' },
       damage: {
         base: { number: 1, denomination: 8, bonus: '', types: ['slashing'] },
       },
     },
+    flags: { [FLAGS_KEY]: expectedFlags(battleAxe, 'proficient') },
   });
 });
 
@@ -290,24 +389,46 @@ test('itemProfilePatch: ranged weapon includes range only for a sole ranged prof
     _id: 'item-2',
     system: {
       proficient: 1,
+      type: { value: 'rmeBows' },
+      properties: propsOf(shortbow, 'proficient'),
+      weight: { value: 2, units: 'lb' },
+      price: { value: 25, denomination: 'gp' },
       damage: {
         base: { number: 1, denomination: 6, bonus: '', types: ['piercing'] },
       },
       range: { value: 80, long: 320, units: 'ft' },
     },
+    flags: { [FLAGS_KEY]: expectedFlags(shortbow, 'proficient') },
   });
 });
 
-test('itemProfilePatch: armor returns only proficient', () => {
+test('itemProfilePatch: armor returns type, proficient, and repaired physical stats', () => {
   const item = { _id: 'item-3', system: { proficient: 1 } };
   const patch = itemProfilePatch(item, chainShirt, 'proficient');
-  assert.deepEqual(patch, { _id: 'item-3', system: { proficient: 1 } });
+  assert.deepEqual(patch, {
+    _id: 'item-3',
+    system: {
+      proficient: 1,
+      type: { value: 'medium' },
+      weight: { value: 10, units: 'lb' },
+      price: { value: 50, denomination: 'gp' },
+    },
+    flags: { [FLAGS_KEY]: expectedFlags(chainShirt, 'proficient') },
+  });
 });
 
-test('itemProfilePatch: a weapon without parseable damage only syncs proficiency', () => {
+test('itemProfilePatch: a weapon without parseable damage syncs proficiency, type, and properties', () => {
   const item = { _id: 'item-4', system: { proficient: 0 } };
   const patch = itemProfilePatch(item, claw, 'proficient');
-  assert.deepEqual(patch, { _id: 'item-4', system: { proficient: 1 } });
+  assert.deepEqual(patch, {
+    _id: 'item-4',
+    system: {
+      proficient: 1,
+      type: { value: 'natural' },
+      properties: propsOf(claw, 'proficient'),
+    },
+    flags: { [FLAGS_KEY]: expectedFlags(claw, 'proficient') },
+  });
 });
 
 test('itemProfilePatch: preserves an existing damage bonus and types', () => {
@@ -397,13 +518,67 @@ test('itemProfilePatch: sole melee tier does not write a null range onto a blank
   assert.equal(patch.system.range, undefined);
 });
 
+test('itemProfilePatch: preserves native and unrelated properties while replacing only rme-* keys', () => {
+  const item = {
+    _id: 'x1',
+    system: {
+      proficient: 1,
+      properties: ['fir', 'rch', 'rme-awkward', 'rme-heavy'],
+    },
+  };
+  const patch = itemProfilePatch(item, boltActionRifle, 'proficient');
+  const props = patch.system.properties;
+  assert.ok(props.includes('fir'));
+  assert.ok(props.includes('rch'));
+  assert.ok(props.includes('rme-heavy'));
+  assert.ok(!props.includes('rme-awkward'));
+  assert.deepEqual(
+    [...props].sort(),
+    [...new Set([...propsOf(boltActionRifle, 'proficient'), 'fir', 'rch'])].sort()
+  );
+});
+
+test('itemProfilePatch: clears stale rme-* keys not granted by the selected tier', () => {
+  const item = {
+    _id: 'x2',
+    system: { proficient: 1, properties: ['fir', 'rme-awkward', 'rme-hipshot'] },
+  };
+  const patch = itemProfilePatch(item, boltActionRifle, 'proficient');
+  assert.deepEqual(patch.system.properties, [
+    'fir',
+    ...propsOf(boltActionRifle, 'proficient'),
+  ]);
+});
+
+test('itemProfilePatch: repairs zero/missing weight and price but never overwrites a nonzero user value', () => {
+  const zero = {
+    _id: 'z1',
+    system: {
+      proficient: 1,
+      weight: { value: 0, units: 'lb' },
+      price: { value: 0, denomination: 'gp' },
+    },
+  };
+  const patch = itemProfilePatch(zero, boltActionRifle, 'proficient');
+  assert.deepEqual(patch.system.weight, { value: 12, units: 'lb' });
+  assert.deepEqual(patch.system.price, { value: 1000, denomination: 'gp' });
+
+  const nonzero = {
+    _id: 'n1',
+    system: {
+      proficient: 1,
+      weight: { value: 3, units: 'oz' },
+      price: { value: 50, denomination: 'gp' },
+    },
+  };
+  const patch2 = itemProfilePatch(nonzero, boltActionRifle, 'proficient');
+  assert.equal(patch2.system.weight, undefined);
+  assert.equal(patch2.system.price, undefined);
+});
+
 // ---------------------------------------------------------------------------
 // syncActorItems - mock helpers
 // ---------------------------------------------------------------------------
-
-function deepClone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
 
 function mergeItem(item, update) {
   const merged = { ...item, system: { ...item.system } };
@@ -413,6 +588,13 @@ function mergeItem(item, update) {
     } else {
       merged.system[key] = value;
     }
+  }
+  if (update.flags) {
+    merged.flags = { ...(merged.flags || {}) };
+    merged.flags[FLAGS_KEY] = {
+      ...(merged.flags?.[FLAGS_KEY] || {}),
+      ...update.flags[FLAGS_KEY],
+    };
   }
   return merged;
 }
@@ -435,21 +617,21 @@ function makeActor(items) {
   return actor;
 }
 
+// Build the exact module-owned target state for an entry at a level, using the
+// same mapper, so idempotency assertions can construct a fully-matching item.
+function fullySyncedState(entryLike, level) {
+  const data = makeItemData(entryLike, level);
+  const system = { ...data.system };
+  delete system.description;
+  return { flags: { [FLAGS_KEY]: data.flags[FLAGS_KEY] }, system };
+}
+
 // ---------------------------------------------------------------------------
 // syncActorItems - idempotency and scope
 // ---------------------------------------------------------------------------
 
 test('syncActorItems: is idempotent and writes nothing when fields already match', async () => {
-  const items = [
-    {
-      _id: 'i1',
-      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
-      system: {
-        proficient: 1,
-        damage: { base: { number: 1, denomination: 8, bonus: '', types: ['slashing'] } },
-      },
-    },
-  ];
+  const items = [{ _id: 'i1', ...fullySyncedState(battleAxe, 'proficient') }];
   const actor = makeActor(items);
   const training = { groups: { Axes: 'proficient' } };
   const updates = await syncActorItems(actor, catalog.equipment, training);
@@ -467,18 +649,15 @@ test('syncActorItems: writes only when a module-owned field differs, then stops'
   ];
   const actor = makeActor(items);
   const training = { groups: { Axes: 'proficient' } };
+  const expected = itemProfilePatch(
+    { _id: 'i1', flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } }, system: { proficient: 0 } },
+    battleAxe,
+    'proficient'
+  );
 
   const first = await syncActorItems(actor, catalog.equipment, training);
   assert.equal(first.length, 1);
-  assert.deepEqual(first[0], {
-    _id: 'i1',
-    system: {
-      proficient: 1,
-      damage: {
-        base: { number: 1, denomination: 8, bonus: '', types: ['slashing'] },
-      },
-    },
-  });
+  assert.deepEqual(first[0], expected);
 
   // After the mock applies the update, a second run is a no-op.
   const second = await syncActorItems(actor, catalog.equipment, training);
@@ -613,5 +792,96 @@ test('syncActorItems: moving to a sole melee tier clears native range idempotent
   assert.equal(first[0].system.proficient, 1);
 
   const second = await syncActorItems(actor, [rangedThenMelee], training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: preserves a nonzero user price and native mastery while migrating zero weight', async () => {
+  const items = [
+    {
+      _id: 'm1',
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: {
+        proficient: 0,
+        mastery: 2,
+        weight: { value: 0, units: 'lb' },
+        price: { value: 50, denomination: 'gp' },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Firearms: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  // The patch never sets mastery, never overwrites the nonzero price, and
+  // migrates the zero weight from the parsed source.
+  assert.equal(first[0].system.mastery, undefined);
+  assert.equal(first[0].system.price, undefined);
+  assert.deepEqual(first[0].system.weight, { value: 12, units: 'lb' });
+  assert.equal(items[0].system.mastery, 2);
+  assert.deepEqual(items[0].system.price, { value: 50, denomination: 'gp' });
+  assert.deepEqual(items[0].system.weight, { value: 12, units: 'lb' });
+
+  // Idempotent: the migrated weight is never rewritten, and nothing writes again.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a legacy natural weapon with matching system fields gains flag metadata on first sync only', async () => {
+  const level = 'proficient';
+  const clawProps = propsOf(claw, level);
+  const items = [
+    {
+      _id: 'nw1',
+      // An old-release flag block: catalogId only, no module-owned metadata.
+      flags: { [FLAGS_KEY]: { catalogId: 'natural-weapons/claw' } },
+      // Native system fields already match the tier, so no system diff exists.
+      system: { proficient: 1, type: { value: 'natural' }, properties: clawProps },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { 'Natural Weapons': level } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const flags = first[0].flags[FLAGS_KEY];
+  assert.equal(flags.activeTier, level);
+  assert.deepEqual(flags.activeProperties, tierProperties(claw, level));
+  assert.equal(flags.expertPerk, claw.expertPerk);
+  assert.equal(flags.catalogId, 'natural-weapons/claw');
+  // Only the flag metadata was added; no system field was rewritten.
+  assert.deepEqual(items[0].system, {
+    proficient: 1,
+    type: { value: 'natural' },
+    properties: clawProps,
+  });
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a legacy rifle with matching system fields gains activeProperties and the expert perk', async () => {
+  const level = 'expert';
+  const target = fullySyncedState(boltActionRifle, level);
+  const items = [
+    {
+      _id: 'lr1',
+      // An old-release flag block: catalogId only, no module-owned metadata.
+      flags: { [FLAGS_KEY]: { catalogId: 'firearms/bolt-action-rifle' } },
+      system: target.system,
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'firearms/bolt-action-rifle': level } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const flags = first[0].flags[FLAGS_KEY];
+  assert.equal(flags.activeTier, level);
+  assert.deepEqual(flags.activeProperties, tierProperties(boltActionRifle, level));
+  assert.equal(flags.expertPerk, boltActionRifle.expertPerk);
+  assert.ok(flags.activeProperties.some((p) => p.key === 'rme-disarm'));
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
   assert.deepEqual(second, []);
 });

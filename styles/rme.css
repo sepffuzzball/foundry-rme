@@ -23,3 +23,25 @@
 .rme-origin { display:inline-block; margin-left:.35rem; padding:.05rem .35rem; border-radius:1rem; background:var(--color-border-light-1); }
 .rme-reference pre, .rme-source { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
 @media(max-width:700px) { .rme-row { grid-template-columns:1fr 1fr; } .rme-row > :first-child { grid-column:1/-1; } }
+
+/* Additive RME reference panel inside the native dnd5e item details tab. */
+.rme-item-panel { --rme-item-accent:#9c5639; margin:1rem 0; padding:1rem; border:1px solid var(--color-border-light-2); border-inline-start:4px solid var(--rme-item-accent); border-radius:8px; background:color-mix(in srgb,var(--color-cool-4,#786452) 7%,transparent); }
+.rme-item-heading { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; }
+.rme-item-heading h2 { margin:.1rem 0; font-size:1.2rem; }
+.rme-item-heading p, .rme-item-equipped { margin:.25rem 0; }
+.rme-item-eyebrow { color:var(--rme-item-accent); font-size:.72rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+.rme-item-tier, .rme-item-active { display:inline-block; padding:.2rem .6rem; border-radius:2rem; background:color-mix(in srgb,var(--rme-item-accent) 18%,transparent); font-size:.8rem; font-weight:700; }
+.rme-item-equipped { font-weight:700; }
+.rme-item-equipped span { display:block; font-weight:400; opacity:.75; }
+.rme-item-control { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; margin:.7rem 0; }
+.rme-item-control select { min-width:13rem; }
+.rme-item-profile { margin:.45rem 0; padding:.5rem .75rem; border:1px solid var(--color-border-light-2); border-radius:6px; }
+.rme-item-profile summary { cursor:pointer; font-weight:700; }
+.rme-item-profile ul { margin:.5rem 0; padding-inline-start:1.4rem; }
+.rme-item-properties { columns:2; }
+.rme-item-properties label { display:inline-flex; gap:.35rem; align-items:baseline; }
+.rme-item-properties input { pointer-events:none; accent-color:var(--rme-item-accent); }
+.rme-item-perk { margin:.6rem 0; padding:.6rem .75rem; border-inline-start:3px solid var(--rme-item-accent); background:color-mix(in srgb,var(--rme-item-accent) 9%,transparent); }
+.rme-item-perk p { margin:.25rem 0 0; white-space:pre-wrap; }
+.rme-item-error { margin:.5rem 0; padding:.5rem; color:var(--color-level-error); border:1px solid currentColor; border-radius:4px; }
+@media(max-width:600px) { .rme-item-heading { display:block; } .rme-item-tier { margin:.4rem 0; } .rme-item-properties { columns:1; } }

@@ -366,3 +366,63 @@ test('tagged catalog item writes do not re-arm the scheduler, so a sync terminat
     globalThis.fetch = originalFetch;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Init-time dnd5e config registration
+// ---------------------------------------------------------------------------
+
+test('init hook registers RME weapon types and properties without disturbing native dnd5e entries', () => {
+  const originalConfig = globalThis.CONFIG;
+  const nativeWeaponTypes = { simpleM: 'DND5E.WeaponSimpleM', natural: 'DND5E.WeaponNatural' };
+  const nativeWeaponTypeMap = { simpleM: 'melee', natural: 'natural' };
+  const nativeItemProperties = {
+    fin: { label: 'DND5E.ITEM.Property.Finesse' },
+    fir: { label: 'DND5E.ITEM.Property.Firearm' },
+  };
+  const nativeValid = new Set(['fin', 'fir', 'rch']);
+  globalThis.CONFIG = {
+    DND5E: {
+      weaponTypes: { ...nativeWeaponTypes },
+      weaponTypeMap: { ...nativeWeaponTypeMap },
+      weaponProficienciesMap: { simpleM: 'sim' },
+      itemProperties: { ...nativeItemProperties },
+      validProperties: { weapon: new Set(nativeValid) },
+    },
+  };
+  try {
+    const init = hookRegistrations.find((r) => r.name === 'init').handler;
+    assert.doesNotThrow(() => init());
+    const config = globalThis.CONFIG.DND5E;
+    assert.equal(config.weaponTypes.rmeFirearms, 'RME: Firearms', 'rmeFirearms weapon type registered');
+    assert.ok(config.validProperties.weapon.has('rme-awkward'), 'rme-awkward is a valid weapon property');
+    // Native dnd5e entries are left exactly as they were.
+    assert.equal(config.weaponTypes.simpleM, 'DND5E.WeaponSimpleM');
+    assert.equal(config.weaponTypes.natural, 'DND5E.WeaponNatural');
+    assert.equal(config.weaponTypeMap.simpleM, 'melee');
+    assert.equal(config.weaponTypeMap.natural, 'natural');
+    assert.deepEqual(config.itemProperties.fin, { label: 'DND5E.ITEM.Property.Finesse' });
+    assert.deepEqual(config.itemProperties.fir, { label: 'DND5E.ITEM.Property.Firearm' });
+    assert.equal(config.weaponProficienciesMap.simpleM, 'sim');
+    for (const key of nativeValid) assert.ok(config.validProperties.weapon.has(key), `native weapon property ${key} preserved`);
+    // RME weapon types never claim a native simple/martial proficiency.
+    assert.equal(config.weaponProficienciesMap.rmeFirearms, undefined);
+  } finally {
+    globalThis.CONFIG = originalConfig;
+  }
+});
+
+test('init hook logs a warning and does not throw when CONFIG.DND5E is missing', () => {
+  const originalConfig = globalThis.CONFIG;
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  globalThis.CONFIG = {};
+  try {
+    const init = hookRegistrations.find((r) => r.name === 'init').handler;
+    assert.doesNotThrow(() => init());
+    assert.ok(warnings.some((w) => w.includes('CONFIG.DND5E')), 'warning should mention the missing CONFIG.DND5E');
+  } finally {
+    console.warn = originalWarn;
+    globalThis.CONFIG = originalConfig;
+  }
+});

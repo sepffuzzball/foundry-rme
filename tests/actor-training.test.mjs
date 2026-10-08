@@ -70,6 +70,13 @@ function mergeItem(item, update) {
       merged.system[key] = value;
     }
   }
+  if (update.flags) {
+    merged.flags = { ...(merged.flags || {}) };
+    merged.flags[FLAGS_KEY] = {
+      ...(merged.flags?.[FLAGS_KEY] || {}),
+      ...update.flags[FLAGS_KEY],
+    };
+  }
   return merged;
 }
 
