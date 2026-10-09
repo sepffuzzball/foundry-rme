@@ -36,14 +36,24 @@ test('updates a magazine badge on repeated renders without touching native uses'
     const actor = makeActor(weapon), element = elementFor(actor);
     renderActorAmmoBadges({ document: actor }, element, catalog.equipment);
     const badge = element.rows[0].badges[0];
-    assert.equal(badge.textContent, '0/4');
+    assert.equal(badge.textContent, 'Ammo 0/4');
     weapon.flags['foundry-rme'].ammunition.loaded = 3;
     renderActorAmmoBadges({ document: actor }, element, catalog.equipment);
     assert.equal(element.rows[0].badges.length, 1);
-    assert.equal(badge.textContent, '3/4');
+    assert.equal(badge.textContent, 'Ammo 3/4');
     assert.equal(badge.attributes['aria-label'], 'RME loaded ammunition: 3 of 4 (rifle/rifle-cartridge)');
+    assert.equal(badge.attributes.title, 'RME loaded ammunition: 3 of 4 (rifle/rifle-cartridge)');
     assert.deepEqual(weapon.system.uses, { value: 7, max: 9 });
   } finally { globalThis.document = oldDocument; }
+});
+
+test('magazine badge CSS stays content-sized and supports the dark theme', async () => {
+  const css = await readFile(new URL('../styles/rme.css', import.meta.url), 'utf8');
+  assert.match(css, /\.dnd5e2 \.item-name \.name-stacked > \.rme-magazine-badge\s*\{[^}]*display:inline-flex[^}]*flex:0 0 auto[^}]*width:max-content[^}]*max-width:100%/);
+  assert.match(css, /\.rme-magazine-badge\s*\{[^}]*white-space:nowrap/);
+  assert.match(css, /\.rme-magazine-badge\s*\{[^}]*background:var\(--dnd5e-background-card/);
+  assert.match(css, /\.theme-dark \.rme-magazine-badge/);
+  assert.doesNotMatch(css, /\[data-theme="dark"\] \.rme-magazine-badge/);
 });
 
 test('ignores non-magazines, unmarked items, missing rows, and removes badges when capacity drops to zero', () => {
@@ -53,7 +63,7 @@ test('ignores non-magazines, unmarked items, missing rows, and removes badges wh
     const weapon = { _id: 'rifle', type: 'weapon', flags: { 'foundry-rme': { catalogId: rifle.id, ammunition: { loaded: 1 } } }, system: {} };
     const actor = makeActor(weapon), element = elementFor(actor);
     renderActorAmmoBadges({ document: actor }, element, catalog.equipment);
-    assert.equal(element.rows[0].badges[0].textContent, '1/4');
+    assert.equal(element.rows[0].badges[0].textContent, 'Ammo 1/4');
     const cannon = catalog.equipment.find((entry) => entry.name === 'Hand Cannon');
     weapon.flags['foundry-rme'].catalogId = cannon.id;
     weapon.flags['foundry-rme'].training = { items: { [cannon.id]: 'expert' } };

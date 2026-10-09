@@ -25,7 +25,7 @@ export function renderActorAmmoBadges(app, element, equipment) {
     const badge = existing || document.createElement('span');
     badge.dataset.rmeMagazineBadge = '';
     badge.className = 'rme-magazine-badge';
-    badge.textContent = `${loaded}/${capacity}`;
+    badge.textContent = `Ammo ${loaded}/${capacity}`;
     const ammo = state.loadedAmmoId == null || String(state.loadedAmmoId).trim() === '' ? '' : ` (${state.loadedAmmoId})`;
     const label = `RME loaded ammunition: ${loaded} of ${capacity}${ammo}`;
     badge.setAttribute('title', label);

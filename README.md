@@ -85,7 +85,7 @@ capacity; when no Loading property is present, ammunition is spent directly. The
 Portable Ballista is direct but does not use a consumable
 stack: it spends an ordinary Javelin actor weapon stack, one javelin per shot.
 A magazine weapon exposes loaded/capacity and reload options, and its row in an
-actor's inventory shows a `loaded/capacity` badge; the native Uses/charges
+actor's inventory shows a concise `Ammo N/M` badge; the native Uses/charges
 tracker is not used for RME ammunition. Native dnd5e ammunition consumption is
 not used, and turn costs are player enforced.
 Cross-client concurrent shots can race: ammunition state is not coordinated

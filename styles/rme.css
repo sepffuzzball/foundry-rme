@@ -54,8 +54,9 @@
 .rme-ammo h3 { margin:.1rem 0 .45rem; font-size:1rem; }
 .rme-ammo p { margin:.3rem 0; }
 .rme-ammo-warning { color:var(--color-level-warning,#8a5b00); font-weight:600; }
-.rme-magazine-badge { display:inline-block; margin-inline-start:.35rem; padding:.08rem .35rem; border:1px solid var(--color-border-light-2, #777); border-radius:999px; background:color-mix(in srgb, var(--color-text-light-0, #fff) 88%, transparent); color:var(--color-text-dark-primary, #222); font-size:.72em; font-weight:700; line-height:1.35; white-space:nowrap; vertical-align:middle; }
-[data-theme="dark"] .rme-magazine-badge { background:color-mix(in srgb, var(--color-text-dark-1, #222) 88%, transparent); color:var(--color-text-light-1, #eee); }
+.rme-magazine-badge { display:inline-flex; flex:0 0 auto; width:max-content; max-width:100%; align-self:flex-start; justify-self:start; margin-inline-start:.35rem; padding:.08rem .35rem; border:var(--pill-border,1px solid var(--color-border-light-2,#777)); border-radius:3px; background:var(--dnd5e-background-card,var(--color-bg-option,#eee)); color:var(--color-text-dark-primary,#222); font-size:.72em; font-weight:700; line-height:1.35; white-space:nowrap; vertical-align:middle; }
+.dnd5e2 .item-name .name-stacked > .rme-magazine-badge { display:inline-flex; flex:0 0 auto; width:max-content; max-width:100%; align-self:flex-start; justify-self:start; }
+.theme-dark .rme-magazine-badge { background:var(--dnd5e-background-card,var(--color-bg-option,#303030)); color:var(--color-text-light-1,#eee); }
 
 /* Read-only actor Details pills; scoped fallbacks only when dnd5e pill styles are absent. */
 .rme-proficiencies { margin:.55rem 0; min-width:0; }
