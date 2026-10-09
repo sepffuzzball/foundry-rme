@@ -110,6 +110,10 @@ test('proficiency pills follow native dnd5e chip styling', () => {
   assert.doesNotMatch(proficiencyCss, /\[data-theme="dark"\]/);
   assert.match(proficiencyCss, /\.rme-proficiencies li\.rme-proficiency-expert[^}]*background:#f2c18b[^}]*color:#321b0b/);
   assert.match(proficiencyCss, /\.theme-dark \.rme-proficiencies li\.rme-proficiency-expert[^}]*background:#6c3515[^}]*color:#fff2e5/);
+  assert.match(proficiencyCss, /ul\.rme-proficiency-list\s*>\s*li\.pill[^}]*flex:0 1 auto[^}]*width:fit-content[^}]*max-width:100%[^}]*min-width:0[^}]*grid-column:auto/);
+  assert.match(proficiencyCss, /ul\.rme-proficiency-class-items\s*>\s*li\.pill[^}]*flex:0 1 auto[^}]*width:fit-content/);
+  assert.match(proficiencyCss, /ul\.rme-proficiency-list\s*>\s*li\.rme-proficiency-class[^}]*display:inline-flex/);
+  assert.match(proficiencyCss, /ul\.pills\s*\{[^}]*display:flex[^}]*flex-wrap:wrap/);
 });
 
 test('ignores irrelevant actors and missing Details targets', () => {
@@ -133,6 +137,9 @@ test('class group stays collapsed, reports mixed tiers, uses child pills and pre
   assert.equal(text(descendants(group, 'summary')[0]).includes('Mixed tiers'), true);
   assert.ok(!text(descendants(group, 'summary')[0]).includes('Proficient'));
   assert.ok(descendants(group, 'summary')[0].title || descendants(group, 'summary')[0].attributes['aria-label'].includes('Mixed tiers'));
+  const summaryText = text(descendants(group, 'summary')[0]);
+  assert.match(summaryText, /\(\d+\)/);
+  assert.doesNotMatch(summaryText, /items?/i);
   const shortbow = descendants(group, 'li').find((li) => li.textContent === 'Shortbow'); assert.ok(shortbow);
   assert.equal(shortbow.title, 'Shortbow: Expert');
   group.open = true; manual.items['bows/shortbow'] = 'proficient'; renderSheet();
@@ -140,4 +147,17 @@ test('class group stays collapsed, reports mixed tiers, uses child pills and pre
   assert.equal(reopened.open, true);
   const child = descendants(reopened, 'li').find((li) => li.textContent === 'Shortbow');
   assert.ok(!child.className.includes('rme-proficiency-expert')); assert.equal(child.title, 'Shortbow: Proficient');
+});
+
+test('a rogue with no natural grants renders no Natural Weapons category', () => {
+  const f = fixture();
+  f.actor.items = [{ id: 'rogue', type: 'class', name: 'Rogue', system: { classIdentifier: 'rogue', advancement: [] } }];
+  f.actor.system.details = { originalClass: 'rogue' };
+  f.actor.getFlag = () => undefined;
+  render(f, catalog.equipment);
+  const root = panel(f); assert.ok(root);
+  const weapons = descendants(root, 'section').find((section) => text(section.children[0]).includes('RME WEAPONS'));
+  assert.ok(weapons);
+  const natural = descendants(weapons, 'li').find((pill) => pill.textContent === 'Natural Weapons');
+  assert.equal(natural, undefined);
 });

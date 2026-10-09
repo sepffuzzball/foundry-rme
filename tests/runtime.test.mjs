@@ -17,6 +17,8 @@ const {
   shouldSyncActorUpdate,
   hasProviderItems,
   queueActorSync,
+  queueNaturalDefaultMigration,
+  runNaturalDefaultMigration,
   mergeChoices,
   validateChoiceSelection,
   choiceSpecs,
@@ -294,6 +296,23 @@ test('hasProviderItems selects only actors carrying class/race/subclass/feat ite
   assert.equal(hasProviderItems(null), false);
 });
 
+// Merge an embedded-document update into the live mock item, mirroring the real
+// Foundry `updateEmbeddedDocuments` behavior: both the `system` block and the
+// module-owned `flags` block are merged into the existing item (each scope's
+// flag object is spread onto the item's existing flags rather than replaced), so
+// a mock actor actually reflects an activeTier / proficient write.
+function applyItemUpdate(item, update) {
+  const next = { ...item };
+  if (update.system) next.system = { ...item.system, ...update.system };
+  if (update.flags) {
+    next.flags = { ...item.flags };
+    for (const [scope, values] of Object.entries(update.flags)) {
+      next.flags[scope] = { ...item.flags?.[scope], ...values };
+    }
+  }
+  return next;
+}
+
 function makeActor({ items = [], flags = {}, originalClass = null, isOwner = true } = {}) {
   const state = {};
   for (const [scope, values] of Object.entries(flags)) state[scope] = { ...values };
@@ -307,7 +326,7 @@ function makeActor({ items = [], flags = {}, originalClass = null, isOwner = tru
     async updateEmbeddedDocuments(type, updates) {
       for (const update of updates) {
         const idx = items.findIndex((i) => i._id === update._id);
-        if (idx !== -1) items[idx] = { ...items[idx], system: { ...items[idx].system, ...update.system } };
+        if (idx !== -1) items[idx] = applyItemUpdate(items[idx], update);
       }
       return updates;
     },
@@ -328,7 +347,7 @@ function makeDeferredActor() {
   const applyUpdates = (updates) => {
     for (const update of updates) {
       const idx = items.findIndex((i) => i._id === update._id);
-      if (idx !== -1) items[idx] = { ...items[idx], system: { ...items[idx].system, ...update.system } };
+      if (idx !== -1) items[idx] = applyItemUpdate(items[idx], update);
     }
   };
   const actor = {
@@ -442,6 +461,318 @@ test('tagged catalog item writes do not re-arm the scheduler, so a sync terminat
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(actor.items.find((i) => i._id === 'i1').system.proficient, 1, 'the sync applied the derived training once');
     assert.equal(scheduled, 1, 'the sync must not re-arm itself after applying (no feedback loop)');
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Render-hook legacy natural fallback migration
+// ---------------------------------------------------------------------------
+
+const renderApp = (name) => hookRegistrations.find((r) => r.scope === 'on' && r.name === name).handler;
+
+// A natural-weapons catalog Item synced under the old implicit Proficient
+// fallback: catalogId in the natural prefix, activeTier 'proficient', native
+// proficiency 1, and no grant/override, so the effective state is Untrained.
+function legacyNaturalItem() {
+  return {
+    _id: 'n1',
+    type: 'weapon',
+    name: 'Bite',
+    flags: { 'foundry-rme': { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } },
+    system: { proficient: 1 },
+  };
+}
+
+test('actor render hook re-syncs a legacy natural item to untrained even without details or inventory targets', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = makeFetchMock();
+  try {
+    const actor = makeActor({ items: [legacyNaturalItem()] });
+    const element = { querySelector: () => null };
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 0, 'the legacy natural item was re-synced to untrained');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('actor render hook does not fetch for an ordinary actor with no candidate and no render targets', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async (url) => { fetchCalls += 1; return makeFetchMock()(url); };
+  try {
+    const actor = makeActor({ items: [] });
+    const element = { querySelector: () => null };
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(fetchCalls, 0, 'an ordinary actor with no candidate or render target does not fetch the catalog');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('actor render hook does not re-queue a sync on a repeated render after the migration', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalQueue = globalThis.queueMicrotask;
+  let scheduled = 0;
+  globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
+  globalThis.fetch = makeFetchMock();
+  try {
+    const actor = makeActor({ items: [legacyNaturalItem()] });
+    const element = { querySelector: () => null };
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 1, 'the first render schedules exactly one sync');
+    assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 0);
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 1, 'a repeated render after the migration does not schedule another sync');
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('actor render hook coalesces a second render while the first sync is in flight', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalQueue = globalThis.queueMicrotask;
+  let scheduled = 0;
+  globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
+  globalThis.fetch = makeFetchMock();
+  try {
+    const actor = makeActor({ items: [legacyNaturalItem()] });
+    const element = { querySelector: () => null };
+    // Two renders in the same tick both match the legacy candidate, but the
+    // per-actor coalescing queue must schedule only one sync microtask.
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 1, 'two candidate renders in one tick coalesce into one sync microtask');
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function makeDeferredNaturalActor() {
+  const state = {};
+  const items = [legacyNaturalItem()];
+  let deferNext = true;
+  let onFirstUpdateResolve;
+  const applyUpdates = (updates) => {
+    for (const update of updates) {
+      const idx = items.findIndex((i) => i._id === update._id);
+      if (idx !== -1) items[idx] = applyItemUpdate(items[idx], update);
+    }
+  };
+  const actor = {
+    id: 'a1',
+    documentName: 'Actor',
+    isOwner: true,
+    items,
+    system: { details: { originalClass: null } },
+    getFlag(scope, key) { return state[scope]?.[key]; },
+    setFlag(scope, key, value) { state[scope] = { ...(state[scope] || {}), [key]: value }; },
+    updateCalls: 0,
+    onFirstUpdate: new Promise((resolve) => { onFirstUpdateResolve = resolve; }),
+    async updateEmbeddedDocuments(type, updates) {
+      actor.updateCalls += 1;
+      if (deferNext) {
+        deferNext = false;
+        onFirstUpdateResolve();
+        return new Promise((resolve) => { actor.resolvePending = () => { applyUpdates(updates); resolve(updates); }; });
+      }
+      applyUpdates(updates);
+      return updates;
+    },
+  };
+  return actor;
+}
+
+// Deferred natural actor whose first embedded-document write is deferred but
+// does NOT mutate the live items when it resolves, so a natural candidate stays
+// eligible for migration after the full sync settles. This is used to verify the
+// ownership recheck between the full sync and the migration: with ownership
+// lost, the migration - which would otherwise still write - is skipped.
+function makeDeferredNaturalActorNoApply() {
+  const state = {};
+  const items = [legacyNaturalItem()];
+  let deferNext = true;
+  let onFirstUpdateResolve;
+  const applyUpdates = (updates) => {
+    for (const update of updates) {
+      const idx = items.findIndex((i) => i._id === update._id);
+      if (idx !== -1) items[idx] = applyItemUpdate(items[idx], update);
+    }
+  };
+  const actor = {
+    id: 'a1',
+    documentName: 'Actor',
+    isOwner: true,
+    items,
+    system: { details: { originalClass: null } },
+    getFlag(scope, key) { return state[scope]?.[key]; },
+    setFlag(scope, key, value) { state[scope] = { ...(state[scope] || {}), [key]: value }; },
+    updateCalls: 0,
+    onFirstUpdate: new Promise((resolve) => { onFirstUpdateResolve = resolve; }),
+    async updateEmbeddedDocuments(type, updates) {
+      actor.updateCalls += 1;
+      if (deferNext) {
+        deferNext = false;
+        onFirstUpdateResolve();
+        return new Promise((resolve) => { actor.resolvePending = () => { resolve(updates); }; });
+      }
+      applyUpdates(updates);
+      return updates;
+    },
+  };
+  return actor;
+}
+
+test('actor render hook rechecks effective training when a grant arrives during the in-flight sync', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = makeFetchMock();
+  try {
+    const actor = makeDeferredNaturalActor();
+    const element = { querySelector: () => null };
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    await actor.onFirstUpdate;
+    // The first sync is blocked on the deferred embedded-document update. While
+    // it is in flight, a manual proficient override arrives; the queue marks the
+    // actor dirty and reruns, recomputing effective training at run time, so the
+    // explicit grant wins over the stale untrained write.
+    actor.setFlag('foundry-rme', 'training', { items: { 'natural-weapons/bite': 'proficient' } });
+    queueActorSync(actor);
+    actor.resolvePending();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 1, 'the final effective level (proficient) wins over the stale untrained write');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('actor render hook rechecks eligibility right before writing when proficiency is changed while the migration is queued', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalQueue = globalThis.queueMicrotask;
+  const pending = [];
+  globalThis.queueMicrotask = (fn) => { pending.push(fn); };
+  globalThis.fetch = makeFetchMock();
+  try {
+    const item = legacyNaturalItem();
+    const actor = makeActor({ items: [item] });
+    let updateCalls = 0;
+    const baseUpdate = actor.updateEmbeddedDocuments.bind(actor);
+    actor.updateEmbeddedDocuments = async (type, updates) => { updateCalls += 1; return baseUpdate(type, updates); };
+    const element = { querySelector: () => null };
+    renderApp('renderApplicationV2')({ document: actor }, element);
+    // Let the catalog fetch settle so the render .then queues the migration.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(pending.length >= 1, 'the render must have queued a migration microtask');
+    // The user changes the native proficiency to 0 after the migration was queued
+    // but before its microtask runs; the migration must recheck and write nothing.
+    item.system.proficient = 0;
+    const queued = pending.splice(0);
+    for (const fn of queued) originalQueue(fn);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(updateCalls, 0, 'a stale natural item whose proficiency was changed to 0 is never rewritten');
+    assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 0);
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('runNaturalDefaultMigration patches only the qualifying legacy natural item and leaves other catalog items alone', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = makeFetchMock();
+  try {
+    const classItem = { _id: 'c1', type: 'class', name: 'Fighter', system: { classIdentifier: 'fighter', advancement: [] } };
+    const axeItem = { _id: 'i1', type: 'weapon', name: 'Battle Axe', flags: { 'foundry-rme': { catalogId: 'axes/battle-axe' } }, system: { proficient: 0 } };
+    const naturalItem = { _id: 'n1', type: 'weapon', name: 'Bite', flags: { 'foundry-rme': { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } }, system: { proficient: 1 } };
+    const actor = makeActor({
+      items: [classItem, axeItem, naturalItem],
+      flags: { 'foundry-rme': { choices: { c1: { groups: EIGHT } } } },
+      originalClass: 'c1',
+    });
+    const updates = await runNaturalDefaultMigration(actor);
+    // Only the eligible natural item is patched; the axe is not part of the
+    // migration's equipment and is left untouched.
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0]._id, 'n1');
+    assert.equal(updates[0].system.proficient, 0);
+    assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 0);
+    assert.equal(actor.items.find((i) => i._id === 'n1').flags['foundry-rme'].activeTier, 'untrained');
+    assert.equal(actor.items.find((i) => i._id === 'i1').system.proficient, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('simultaneous full and migration requests are both processed, in either order, with no request discarded', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalQueue = globalThis.queueMicrotask;
+  let scheduled = 0;
+  globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
+  globalThis.fetch = makeFetchMock();
+  try {
+    for (const [label, firstQueue, secondQueue] of [
+      ['full then migration', queueActorSync, queueNaturalDefaultMigration],
+      ['migration then full', queueNaturalDefaultMigration, queueActorSync],
+    ]) {
+      const classItem = { _id: 'c1', type: 'class', name: 'Fighter', system: { classIdentifier: 'fighter', advancement: [] } };
+      const axeItem = { _id: 'i1', type: 'weapon', name: 'Battle Axe', flags: { 'foundry-rme': { catalogId: 'axes/battle-axe' } }, system: { proficient: 0 } };
+      const naturalItem = { _id: 'n1', type: 'weapon', name: 'Bite', flags: { 'foundry-rme': { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } }, system: { proficient: 1 } };
+      const actor = makeActor({
+        items: [classItem, axeItem, naturalItem],
+        flags: { 'foundry-rme': { choices: { c1: { groups: EIGHT } } } },
+        originalClass: 'c1',
+      });
+      let updateCalls = 0;
+      const baseUpdate = actor.updateEmbeddedDocuments.bind(actor);
+      actor.updateEmbeddedDocuments = async (type, updates) => { updateCalls += 1; return baseUpdate(type, updates); };
+      scheduled = 0;
+      assert.equal(firstQueue(actor), true, `${label}: the first request is accepted`);
+      assert.equal(secondQueue(actor), true, `${label}: the second request is accepted`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(scheduled, 1, `${label}: both requests coalesce into one microtask`);
+      // Full sync derives the axe to proficient and corrects the natural; migration
+      // rechecks and writes nothing further. Neither request was dropped.
+      assert.equal(actor.items.find((i) => i._id === 'i1').system.proficient, 1, `${label}: the full sync was processed`);
+      assert.equal(actor.items.find((i) => i._id === 'n1').system.proficient, 0, `${label}: the legacy natural was corrected (no discarded request)`);
+      assert.ok(updateCalls >= 1, `${label}: at least the full sync batch was written`);
+    }
+  } finally {
+    globalThis.queueMicrotask = originalQueue;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('ownership lost during a deferred full sync skips the pending migration write', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalQueue = globalThis.queueMicrotask;
+  let scheduled = 0;
+  globalThis.queueMicrotask = (fn) => { scheduled += 1; return originalQueue(fn); };
+  globalThis.fetch = makeFetchMock();
+  try {
+    // The deferred write is not applied when it resolves, so the natural item is
+    // still a candidate the migration would write were it allowed to run. A full
+    // sync and a migration are queued together; while the full sync is blocked on
+    // its deferred embedded-document write, the actor ceases to be owned, and the
+    // migration must then be skipped so no non-owner write is issued.
+    const actor = makeDeferredNaturalActorNoApply();
+    assert.equal(queueActorSync(actor), true, 'the full sync is queued');
+    assert.equal(queueNaturalDefaultMigration(actor), true, 'the migration is queued alongside the full sync');
+    await actor.onFirstUpdate;
+    assert.equal(actor.updateCalls, 1, 'only the deferred full-sync write has been issued so far');
+    actor.isOwner = false;
+    actor.resolvePending();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 1, 'the full sync and migration coalesce into one microtask');
+    assert.equal(actor.updateCalls, 1, 'the migration must not write for a non-owner');
   } finally {
     globalThis.queueMicrotask = originalQueue;
     globalThis.fetch = originalFetch;

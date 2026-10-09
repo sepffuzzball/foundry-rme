@@ -26,9 +26,10 @@ function entry(id) {
 const battleAxe = entry('axes/battle-axe'); // weapon, group Axes (Basic labels)
 const whip = entry('whips/whip'); // weapon, group Whips (Proficient labels)
 const whipSword = entry('whips/whip-sword'); // two forms => 6 tier rows
-const claw = entry('natural-weapons/claw'); // natural, default proficient
+const claw = entry('natural-weapons/claw'); // natural, default untrained
 const unarmedStrike = entry('natural-weapons/unarmed-strike');
 const bite = entry('natural-weapons/bite');
+const tail = entry('natural-weapons/tail');
 const chainShirt = entry('armor/chain-shirt'); // armor, no tiers
 const buckler = entry('shields/buckler'); // shield, Basic/Expert rows only
 const lightCrossbow = entry('crossbows/light-crossbow'); // expert row is lowercase "expert" in source
@@ -86,9 +87,10 @@ test('resolveTraining: items/groups keys must be exact catalog values', () => {
   );
 });
 
-test('resolveTraining: natural weapons default to proficient except unarmed strike', () => {
-  assert.equal(resolveTraining(claw, {}), 'proficient');
-  assert.equal(resolveTraining(bite, {}), 'proficient');
+test('resolveTraining: natural weapons default to untrained', () => {
+  assert.equal(resolveTraining(claw, {}), 'untrained');
+  assert.equal(resolveTraining(bite, {}), 'untrained');
+  assert.equal(resolveTraining(tail, {}), 'untrained');
   assert.equal(resolveTraining(unarmedStrike, {}), 'untrained');
 });
 
@@ -99,8 +101,8 @@ test('resolveTraining: non-natural, non-trained equipment defaults to untrained'
   assert.equal(resolveTraining(buckler, {}), 'untrained');
 });
 
-test('resolveTraining: natural default is only used for natural kind', () => {
-  // An Armor entry shares no natural default.
+test('resolveTraining: no natural-kind default applies to any kind', () => {
+  // There is no natural-weapon default branch, so an Armor entry is untrained.
   assert.equal(resolveTraining(chainShirt, {}), 'untrained');
 });
 

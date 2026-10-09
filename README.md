@@ -177,6 +177,21 @@ Manual group/item overrides always take precedence over the derived value; the
 dialog shows each item's origin (manual override, derived source, or natural
 default) so a manual choice is never mistaken for an automatic one. Choosing
 Untrained is an explicit override, while Inherit removes the override.
+Natural weapons (including unarmed strike) default to Untrained and only gain a
+Proficient or Expert tier through an explicit manual override or a derived
+grant, for example a subclass such as Moon Druid or Beast that confers
+expertise on specific natural weapons. This module-chosen Untrained fallback is
+an intentional deviation from the `rules/NaturalWeapons.md` source text, which
+still states that a creature with a Natural weapon always has Proficient
+training with it (except Unarmed Strike); the module treats a natural weapon as
+carrying no implicit level and raises it only through a real source. Actor-owned
+natural-weapons Items that were synced under the old implicit Proficient
+fallback are corrected on the next opening of that character's sheet: when no
+grant or manual override actually applies, the module re-syncs that actor-owned
+Item to the Untrained fallback through the existing per-actor sync queue. The
+migration is actor-owned only - world and compendium Items are never
+retroactively edited, and an explicit manual/derived Proficient or Expert grant
+(or a native proficiency the user changed to 0) is left untouched.
 Original-class and multiclass weapon-category choices (8 and 4, respectively)
 and expert/subclass item choices are prompted in the RME Training dialog rather
 than guessed, and these source-linked choices are saved against the provider

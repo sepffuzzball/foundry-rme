@@ -2352,3 +2352,75 @@ test('syncActorItems: never clobbers user-added native properties', async () => 
   const second = await syncActorItems(actor, catalog.equipment, training);
   assert.deepEqual(second, []);
 });
+
+// ---------------------------------------------------------------------------
+// syncActorItems - exact-id itemFilter (legacy natural-default migration)
+// ---------------------------------------------------------------------------
+
+test('syncActorItems: an itemFilter patches only the exact eligible natural item, not an identical duplicate or an unrelated weapon', async () => {
+  const bite = entry('natural-weapons/bite');
+  const items = [
+    // The stale legacy natural item: activeTier proficient and native proficiency 1.
+    {
+      _id: 'n1',
+      type: 'weapon',
+      name: 'Bite',
+      flags: { [FLAGS_KEY]: { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } },
+      system: { proficient: 1 },
+    },
+    // A user-edited duplicate with the same catalog id: native proficiency 0 must
+    // never be re-flagged.
+    {
+      _id: 'n2',
+      type: 'weapon',
+      name: 'Bite',
+      flags: { [FLAGS_KEY]: { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } },
+      system: { proficient: 0 },
+    },
+    // An unrelated catalog weapon that must stay untouched.
+    {
+      _id: 'w1',
+      type: 'weapon',
+      name: 'Battle Axe',
+      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
+      system: { proficient: 1 },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'natural-weapons/bite': 'untrained' } };
+  const itemFilter = (item) =>
+    item.flags?.[FLAGS_KEY]?.activeTier === 'proficient' && item.system?.proficient === 1;
+
+  const updates = await syncActorItems(actor, [bite], training, { itemFilter });
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]._id, 'n1');
+  assert.equal(updates[0].system.proficient, 0);
+  assert.equal(updates[0].flags[FLAGS_KEY].activeTier, 'untrained');
+  // The stale item was corrected...
+  assert.equal(items[0].system.proficient, 0);
+  assert.equal(items[0].flags[FLAGS_KEY].activeTier, 'untrained');
+  // ...the user-edited duplicate and the unrelated weapon were left alone.
+  assert.equal(items[1].system.proficient, 0);
+  assert.equal(items[1].flags[FLAGS_KEY].activeTier, 'proficient');
+  assert.equal(items[2].system.proficient, 1);
+});
+
+test('syncActorItems: the default (no itemFilter) still accepts every actor item', async () => {
+  const bite = entry('natural-weapons/bite');
+  const items = [
+    {
+      _id: 'n1',
+      type: 'weapon',
+      name: 'Bite',
+      flags: { [FLAGS_KEY]: { catalogId: 'natural-weapons/bite', activeTier: 'proficient' } },
+      system: { proficient: 1 },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { items: { 'natural-weapons/bite': 'untrained' } };
+
+  const updates = await syncActorItems(actor, [bite], training);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]._id, 'n1');
+  assert.equal(updates[0].system.proficient, 0);
+});

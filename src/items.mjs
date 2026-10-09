@@ -1112,16 +1112,21 @@ function attackActivityMissing(item, targetReload) {
 // Sync embedded items on `actor` that carry `flags['foundry-rme'].catalogId`
 // and are present in `equipment` (an iterable of catalog entries). Items that
 // are unknown (no catalogId, or an id not in the catalog) are left untouched.
-// Writes are batched through `actor.updateEmbeddedDocuments('Item', updates)`
-// and only issued when a module-owned field actually differs, keeping the
-// operation idempotent and preserving any user-added data that it does not own.
-// Returns the array of updates that were applied.
-export async function syncActorItems(actor, equipment, training = {}) {
+// When `options.itemFilter` is supplied it is checked before matching/patching
+// each actor item; a falsy result skips that item entirely, so a caller can
+// restrict the write to a precise set of items (the default accepts all items,
+// preserving the existing behavior). Writes are batched through
+// `actor.updateEmbeddedDocuments('Item', updates)` and only issued when a
+// module-owned field actually differs, keeping the operation idempotent and
+// preserving any user-added data that it does not own. Returns the array of
+// updates that were applied.
+export async function syncActorItems(actor, equipment, training = {}, options = {}) {
   const byId = new Map();
   for (const entry of equipment) byId.set(entry.id, entry);
 
   const updates = [];
   for (const item of actor.items) {
+    if (options.itemFilter && !options.itemFilter(item)) continue;
     const catalogId = item.flags?.[FLAGS_KEY]?.catalogId;
     if (!catalogId) continue;
     const entry = byId.get(catalogId);

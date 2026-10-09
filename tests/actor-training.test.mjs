@@ -154,10 +154,20 @@ test('resolveEffectiveTraining: derived item level beats derived group level', (
   assert.equal(resolveEffectiveTraining(battleAxe, {}, derived), 'proficient');
 });
 
-test('resolveEffectiveTraining: falls through to the natural default when nothing owns the entry', () => {
-  // Natural weapons default to proficient except unarmed-strike.
-  assert.equal(resolveEffectiveTraining(naturalBite, {}, {}), 'proficient');
+test('resolveEffectiveTraining: falls through to untrained when nothing owns the entry', () => {
+  // Natural weapons no longer carry a default level; like any other entry they
+  // fall through to untrained.
+  assert.equal(resolveEffectiveTraining(naturalBite, {}, {}), 'untrained');
   assert.equal(resolveEffectiveTraining(unarmedStrike, {}, {}), 'untrained');
+});
+
+test('computeActorTraining: natural weapons compute untrained without grants', () => {
+  const actor = makeActor({ items: [] });
+  const result = computeActorTraining(actor, equipment);
+  assert.equal(result.effective.items['natural-weapons/claw'], 'untrained');
+  assert.equal(result.effective.items['natural-weapons/bite'], 'untrained');
+  assert.equal(result.effective.items['natural-weapons/tail'], 'untrained');
+  assert.equal(result.effective.items['natural-weapons/unarmed-strike'], 'untrained');
 });
 
 // ---------------------------------------------------------------------------

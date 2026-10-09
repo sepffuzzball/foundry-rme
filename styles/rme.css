@@ -63,12 +63,14 @@
 .rme-proficiencies .rme-proficiency-section > h3 { display:flex; align-items:center; gap:.4rem; margin:0 0 .25rem; font-size:.82rem; }
 .rme-proficiencies .rme-proficiency-section > h3 dnd5e-icon { width:1em; height:1em; }
 .rme-proficiencies ul.pills { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem; min-width:0; margin:.2rem 0; padding:0; list-style:none; }
+.rme-proficiencies ul.rme-proficiency-list > li.pill,
+.rme-proficiencies ul.rme-proficiency-class-items > li.pill { flex:0 1 auto; width:fit-content; max-width:100%; min-width:0; grid-column:auto; }
 .rme-proficiencies li.pill { position:relative; display:inline-flex; align-items:center; gap:.2rem; max-width:100%; min-width:0; margin:0; padding:.25rem .5rem; border:var(--pill-border,1px solid var(--color-border-light-2,#777)); border-radius:3px; background:var(--dnd5e-background-card,var(--color-bg-option,#eee)); color:var(--color-text-dark-primary,#222); font-family:Roboto, sans-serif; font-size:inherit; font-weight:700; line-height:1.35; text-transform:uppercase; overflow-wrap:anywhere; }
 .theme-dark .rme-proficiencies li.pill { background:var(--dnd5e-background-card,var(--color-bg-option,#303030)); color:var(--color-text-light-1,#eee); }
 .rme-proficiencies li.rme-proficiency-expert, .rme-proficiencies .rme-proficiency-tier.rme-proficiency-expert { border-color:#874313; background:#f2c18b; color:#321b0b; font-weight:700; }
 .theme-dark .rme-proficiencies li.rme-proficiency-expert, .theme-dark .rme-proficiencies .rme-proficiency-tier.rme-proficiency-expert { border-color:#f2c18b; background:#6c3515; color:#fff2e5; }
 .rme-proficiency-expert-cue { font-size:.88em; }
-.rme-proficiencies .rme-proficiency-class { display:block; padding:.25rem .5rem; }
+.rme-proficiencies ul.rme-proficiency-list > li.rme-proficiency-class { display:inline-flex; flex:0 1 auto; width:fit-content; }
 .rme-proficiency-class-disclosure > summary { display:flex; align-items:center; flex-wrap:wrap; gap:.25rem; cursor:pointer; list-style:none; }
 .rme-proficiency-class-disclosure > summary::-webkit-details-marker { display:none; }
 .rme-proficiency-class-disclosure > summary::before { content:"\25B6"; display:inline-block; flex:0 0 auto; font-size:.68em; }

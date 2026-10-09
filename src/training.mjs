@@ -9,15 +9,15 @@
 // Resolution precedence (highest to lowest):
 //   1. explicit item override (wins even when 'untrained')
 //   2. group training
-//   3. natural weapon default: 'proficient', except natural-weapons/unarmed-strike
-//   4. 'untrained'
+//   3. 'untrained'
+//
+// Natural weapons (including unarmed strike) carry no implicit level; they
+// resolve to 'untrained' unless an explicit manual or derived grant raises them.
 //
 // This module has no Foundry globals and no data dependencies; the runtime UI
 // can consume it directly.
 
 export const LEVELS = ['untrained', 'proficient', 'expert'];
-
-const NATURAL_DEFAULT_EXCEPTION_ID = 'natural-weapons/unarmed-strike';
 
 function hasOwn(record, key) {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -42,15 +42,7 @@ export function resolveTraining(equipment, training = {}) {
     return levelOrUntrained(groups[equipment.group]);
   }
 
-  // 3. Natural weapons default to proficient, except unarmed strike.
-  if (
-    equipment.kind === 'natural' &&
-    equipment.id !== NATURAL_DEFAULT_EXCEPTION_ID
-  ) {
-    return 'proficient';
-  }
-
-  // 4. Untrained.
+  // 3. Untrained.
   return 'untrained';
 }
 

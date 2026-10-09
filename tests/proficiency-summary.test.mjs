@@ -301,19 +301,20 @@ test('weapons: three of four group members proficient with no group grant -> thr
 // Natural weapons
 // ---------------------------------------------------------------------------
 
-test('natural: no grants produce only the natural-weapons default category', () => {
-  // An empty actor with no training state - only the natural default applies.
+test('natural: no grants produce no Natural Weapons category', () => {
+  // An empty actor with no training state leaves every natural weapon untrained,
+  // so no Natural Weapons category is emitted.
   const actor = { getFlag() { return undefined; }, items: [] };
   const pictureResult = computeActorTraining(actor, equipment);
   const result = summarizeRmeProficiencies(equipment, pictureResult);
 
   assert.deepEqual(result.armor, []);
-  assert.deepEqual(result.weapons, [
-    { kind: 'category', label: 'Natural Weapons', level: 'proficient', exceptions: [{ label: 'Unarmed Strike', level: 'untrained' }] },
-  ]);
+  assert.deepEqual(result.weapons, []);
 });
 
-test('natural: default seven proficient with unarmed untrained', () => {
+test('natural: every non-unarmed natural proficient still produces a proficient category', () => {
+  // No explicit group or item grants, but the effective per-item levels are all
+  // proficient (except unarmed). The summary still groups the natural weapons.
   const naturals = byGroup('Natural Weapons');
   const effective = {};
   for (const e of naturals) effective[e.id] = e.id === 'natural-weapons/unarmed-strike' ? 'untrained' : 'proficient';
@@ -428,16 +429,16 @@ test('class: rogue class row plus Dueling Blades catalog row through computeActo
     { kind: 'category', label: 'Light Armor', level: 'proficient', exceptions: [] },
   ]);
 
-  // Categories come first (alphabetically), then the class row.
+  // Categories come first (alphabetically), then the class row. A rogue grants
+  // no natural weapons, so no Natural Weapons category is emitted.
   assert.deepEqual(
     result.weapons.map((w) => w.kind),
-    ['category', 'category', 'category', 'class']
+    ['category', 'category', 'class']
   );
   assert.equal(result.weapons[0].label, 'Bludgeons');
   assert.equal(result.weapons[1].label, 'Dueling Blades');
-  assert.equal(result.weapons[2].label, 'Natural Weapons');
 
-  const rogueRow = result.weapons[3];
+  const rogueRow = result.weapons[2];
   assert.equal(rogueRow.kind, 'class');
   assert.equal(rogueRow.label, 'Rogue Weapons');
   assert.equal(rogueRow.level, 'proficient');

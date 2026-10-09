@@ -28,8 +28,8 @@ function createRow(document, row) {
     disclosure.className = 'rme-proficiency-class-disclosure';
     disclosure.setAttribute('data-class-label', row.label);
     const summary = document.createElement('summary');
-    summary.setAttribute('aria-label', row.level ? `${row.label}: ${row.level === 'expert' ? 'Expert' : 'Proficient'}` : `${row.label}: Mixed tiers`);
-    summary.title = row.level ? `${row.label}: ${row.level === 'expert' ? 'Expert' : 'Proficient'}` : `${row.label}: Mixed tiers`;
+    summary.setAttribute('aria-label', `${row.label}: ${row.level ? (row.level === 'expert' ? 'Expert' : 'Proficient') : 'Mixed tiers'} (${row.items.length})`);
+    summary.title = `${row.label}: ${row.level ? (row.level === 'expert' ? 'Expert' : 'Proficient') : 'Mixed tiers'} (${row.items.length})`;
     const label = document.createElement('span'); label.className = 'rme-proficiency-label'; label.textContent = row.label;
     summary.append(label);
     if (row.level) {
@@ -37,7 +37,7 @@ function createRow(document, row) {
     } else {
       const mixed = document.createElement('span'); mixed.className = 'rme-proficiency-count'; mixed.textContent = 'Mixed tiers'; mixed.title = 'This class group contains different proficiency tiers'; summary.append(mixed);
     }
-    const count = document.createElement('span'); count.className = 'rme-proficiency-count'; count.textContent = `${row.items.length} item${row.items.length === 1 ? '' : 's'}`; summary.append(count);
+    const count = document.createElement('span'); count.className = 'rme-proficiency-count'; count.textContent = `(${row.items.length})`; summary.append(count);
     const list = document.createElement('ul'); list.className = 'pills rme-proficiency-class-items';
     for (const entry of row.items) list.append(makePill(document, entry.label, entry.level));
     disclosure.append(summary, list); item.append(disclosure); return item;

@@ -18,6 +18,7 @@ import { handleAmmoAttackRoll, handleAmmoDamageConfig } from './ammo-rolls.mjs';
 import { ammoEffect } from './ammo-effects.mjs';
 import { renderActorAmmoBadges } from './actor-ammo-badge.mjs';
 import { renderActorRmeProficiencies } from './actor-proficiencies.mjs';
+import { hasLegacyNaturalCandidate, hasLegacyNaturalDefault, legacyNaturalItemIds } from './natural-default-migration.mjs';
 
 const ID = 'foundry-rme';
 let catalog;
@@ -160,30 +161,88 @@ export function shouldSyncActorUpdate(data) {
 }
 
 // Per-actor coalescing queue. Multiple hook events for the same actor in one
-// tick schedule a single microtask; only one sync runs per actor at a time. A
-// trigger that arrives while a sync is already in flight records the actor as
-// dirty and the sync loop reruns once the in-progress sync settles, repeating as
-// long as further events keep arriving, so a training-sync event is never
-// discarded. Ownership is re-checked before every run and the entry is always
-// cleared on exit so later events can schedule a fresh sync.
-const actorSyncState = new Map(); // actor id -> { running: bool, dirty: bool }
+// tick schedule a single microtask; only one sync runs per actor at a time. The
+// queue can have two kinds of work pending: a full actor sync (`full`) and a
+// legacy natural-default migration (`migration`). When both are pending at the
+// start of an iteration they are taken and reset together and the loop runs the
+// full sync first, then the migration (which rechecks eligibility against the
+// post-full-sync state). A request that arrives while a sync is in flight records
+// the corresponding flag and the loop reruns once the in-progress sync settles,
+// repeating as long as further requests keep arriving, so neither a full sync nor
+// a migration is ever discarded. Ownership is re-checked before every run and
+// again after an awaited full sync (so a lost owner never runs the migration or
+// any further pending work on a non-owned actor), errors are reported through
+// notifyError without dropping the other kind of pending request, and the entry
+// is always cleared on exit so later events can schedule a fresh sync.
+const actorSyncState = new Map(); // actor id -> { running: bool, full: bool, migration: bool }
 
 async function runActorSync(actor) {
   const data = await fetchCatalog();
   return syncActorRme(actor, data.equipment);
 }
 
+// Correct actor-owned embedded natural Items that were synced under the old
+// implicit Proficient fallback. Only the exact items that still qualify right
+// before the batch write are patched, so a user-edited native proficiency (0), a
+// manual/derived Proficient or Expert grant, or a full sync that already lowered
+// the tier is never re-flagged. Never touches world/compendium Items.
+export async function runNaturalDefaultMigration(actor) {
+  const data = await fetchCatalog();
+  const picture = computeActorTraining(actor, data.equipment);
+  const ids = legacyNaturalItemIds(actor, data.equipment, picture);
+  if (ids.size === 0) return [];
+  // `ids` are embedded item ids, so map the eligible items back to the catalog
+  // ids they reference before filtering the equipment passed to syncActorItems.
+  const catalogIds = new Set();
+  for (const item of actor.items || []) {
+    if (ids.has(embeddedItemId(item))) {
+      const catalogId = item.flags?.[ID]?.catalogId;
+      if (catalogId) catalogIds.add(catalogId);
+    }
+  }
+  const eligible = data.equipment.filter((entry) => catalogIds.has(entry.id));
+  return syncActorItems(actor, eligible, picture.effective, {
+    itemFilter: (item) =>
+      ids.has(embeddedItemId(item)) &&
+      item.flags?.[ID]?.activeTier === 'proficient' &&
+      item.system?.proficient === 1,
+  });
+}
+
+function embeddedItemId(item) {
+  return item.id ?? item._id;
+}
+
 async function runActorSyncLoop(actor, id, state) {
   try {
     while (true) {
-      state.dirty = false;
+      const runFull = state.full;
+      const runMigration = state.migration;
+      state.full = false;
+      state.migration = false;
+      if (!runFull && !runMigration) break;
       if (!actor.isOwner) break;
-      try {
-        await runActorSync(actor);
-      } catch (error) {
-        notifyError(error);
+      if (runFull) {
+        try {
+          await runActorSync(actor);
+        } catch (error) {
+          notifyError(error);
+        }
       }
-      if (!state.dirty) break;
+      // Ownership may have been revoked while the awaited full sync was in
+      // flight (the sheet was closed, or the user's permission was revoked).
+      // Recheck before the migration so an actor that is no longer owned is
+      // never written from, and bail out of the loop so any other pending work
+      // is dropped rather than run on behalf of a non-owner.
+      if (!actor.isOwner) break;
+      if (runMigration) {
+        try {
+          await runNaturalDefaultMigration(actor);
+        } catch (error) {
+          notifyError(error);
+        }
+      }
+      if (!state.full && !state.migration) break;
     }
   } finally {
     state.running = false;
@@ -196,14 +255,28 @@ export function queueActorSync(actor) {
   const id = actor.id;
   if (!id) return false;
   let state = actorSyncState.get(id);
-  if (state?.running) {
-    state.dirty = true;
-    return true;
-  }
   if (!state) {
-    state = { running: false, dirty: false };
+    state = { running: false, full: false, migration: false };
     actorSyncState.set(id, state);
   }
+  state.full = true;
+  if (state.running) return true;
+  state.running = true;
+  queueMicrotask(() => runActorSyncLoop(actor, id, state));
+  return true;
+}
+
+export function queueNaturalDefaultMigration(actor) {
+  if (!actor || !actor.isOwner) return false;
+  const id = actor.id;
+  if (!id) return false;
+  let state = actorSyncState.get(id);
+  if (!state) {
+    state = { running: false, full: false, migration: false };
+    actorSyncState.set(id, state);
+  }
+  state.migration = true;
+  if (state.running) return true;
   state.running = true;
   queueMicrotask(() => runActorSyncLoop(actor, id, state));
   return true;
@@ -321,10 +394,28 @@ Hooks.once('init',()=>{
 const itemParentActor = (item) => item?.parent;
 Hooks.on('renderApplicationV2', (app, element) => {
   if (app?.document?.documentName === 'Actor') {
+    const actor = app.document;
     const hasInventory = Boolean(element?.querySelector?.('li.item[data-item-id]'));
     const hasDetails = Boolean(element?.querySelector?.('section[data-tab="details"] .right'));
-    if (!hasInventory && !hasDetails) return;
+    // A cheap pre-fetch scan: an owned actor carrying a legacy natural-weapons
+    // Item synced under the old implicit Proficient fallback is enough to fetch
+    // the catalog, even when this render exposes neither inventory rows nor a
+    // Details target. It does not cost a fetch for an ordinary actor that has
+    // neither the candidate nor any render target.
+    const hasCandidate = Boolean(actor?.isOwner) && hasLegacyNaturalCandidate(actor);
+    if (!hasInventory && !hasDetails && !hasCandidate) return;
     fetchCatalog().then((data) => {
+      // Before any UI render: an owned actor-owned natural Item that still
+      // carries the old implicit Proficient tier while its effective training
+      // resolves to Untrained is re-synced through the existing per-actor
+      // coalescing queue, but as a migration rather than a full sync. The queue
+      // recomputes effective training and rechecks eligibility at run time, so
+      // an explicit manual/derived grant (or a user-changed native proficiency)
+      // never triggers, and a repeated render after the sync no longer matches
+      // the candidate.
+      if (hasCandidate && hasLegacyNaturalDefault(actor, data.equipment)) {
+        queueNaturalDefaultMigration(actor);
+      }
       if (hasInventory) renderActorAmmoBadges(app, element, data.equipment);
       if (hasDetails) renderActorRmeProficiencies(app, element, data.equipment);
     }).catch(notifyError);
