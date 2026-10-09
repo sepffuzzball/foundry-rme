@@ -13,6 +13,22 @@ function makeBadge(document, level) {
 }
 
 function createRow(document, row) {
+  if (row.kind === 'class') {
+    const item = document.createElement('li');
+    item.className = 'rme-proficiency-row rme-proficiency-class';
+    const disclosure = document.createElement('details');
+    disclosure.className = 'rme-proficiency-class-disclosure';
+    disclosure.setAttribute('data-class-label', row.label);
+    const summary = document.createElement('summary');
+    const label = document.createElement('span'); label.className = 'rme-proficiency-label'; label.textContent = row.label;
+    summary.append(label);
+    if (row.level) summary.append(makeBadge(document, row.level));
+    else { const mixed = document.createElement('span'); mixed.className = 'rme-proficiency-count'; mixed.textContent = 'Mixed tiers'; summary.append(mixed); }
+    const count = document.createElement('span'); count.className = 'rme-proficiency-count'; count.textContent = `${row.items.length} item${row.items.length === 1 ? '' : 's'}`; summary.append(count);
+    const list = document.createElement('ul'); list.className = 'rme-proficiency-class-items';
+    for (const entry of row.items) { const child = document.createElement('li'); const name = document.createElement('span'); name.textContent = entry.label; child.append(name, makeBadge(document, entry.level)); list.append(child); }
+    disclosure.append(summary, list); item.append(disclosure); return item;
+  }
   const item = document.createElement('li');
   item.className = `rme-proficiency-row${row.kind === 'item' ? ' rme-proficiency-item' : ''}`;
   const label = document.createElement('span');
@@ -58,6 +74,7 @@ export function renderActorRmeProficiencies(app, element, equipment) {
   const existing = details.querySelector('[data-rme-proficiencies]');
   const picture = computeActorTraining(actor, equipment);
   const summary = summarizeRmeProficiencies(equipment, picture);
+  const openLabels = new Set(existing ? [...existing.querySelectorAll('details.rme-proficiency-class-disclosure[open]')].map((node) => node.getAttribute('data-class-label')) : []);
   const armor = makeSection(document, 'RME Armor', summary.armor);
   const weapons = makeSection(document, 'RME Weapons', summary.weapons);
   if (!armor && !weapons) {
@@ -68,6 +85,9 @@ export function renderActorRmeProficiencies(app, element, equipment) {
   panel.setAttribute('data-rme-proficiencies', '');
   panel.className = 'rme-proficiencies';
   panel.replaceChildren(...[armor, weapons].filter(Boolean));
+  for (const disclosure of panel.querySelectorAll('details.rme-proficiency-class-disclosure')) {
+    if (openLabels.has(disclosure.getAttribute('data-class-label'))) disclosure.open = true;
+  }
   if (existing) return;
   const weaponPill = details.querySelector('[data-trait="weapon"]')?.closest('.pills-group');
   if (weaponPill?.parentNode) weaponPill.after(panel);

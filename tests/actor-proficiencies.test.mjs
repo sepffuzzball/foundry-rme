@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderActorRmeProficiencies } from '../src/actor-proficiencies.mjs';
+import catalog from '../data/catalog.json' with { type: 'json' };
 
 class Node {
   constructor(tag = 'div') { this.tagName = tag; this.children = []; this.attributes = {}; this.parentNode = null; this.className = ''; this.textContent = ''; }
@@ -16,11 +17,18 @@ class Node {
     if (selector === '[data-trait="weapon"]') return this.weaponTrait || null;
     return null;
   }
+  querySelectorAll(selector) {
+    const all=descendants(this,'*');
+    if(selector==='details[open] > summary') return all.filter((node)=>node.tagName==='details'&&node.open).flatMap((node)=>node.children.filter((child)=>child.tagName==='summary'));
+    if(selector==='details.rme-proficiency-class-disclosure') return all.filter((node)=>node.tagName==='details'&&node.className==='rme-proficiency-class-disclosure');
+    if(selector==='details.rme-proficiency-class-disclosure[open]') return all.filter((node)=>node.tagName==='details'&&node.className==='rme-proficiency-class-disclosure'&&node.open);
+    return [];
+  }
   get firstElementChild() { return this.children[0] || null; }
 }
 
 function descendants(node, tag) {
-  return node.children.flatMap((child) => [ ...(child.tagName === tag ? [child] : []), ...descendants(child, tag) ]);
+  return node.children.flatMap((child) => [ ...(tag === '*' || child.tagName === tag ? [child] : []), ...descendants(child, tag) ]);
 }
 
 function fixture() {
@@ -71,4 +79,44 @@ test('ignores irrelevant actors and missing Details targets', () => {
   renderActorRmeProficiencies({ document: { type: 'npc' } }, f.element, []);
   renderActorRmeProficiencies({ document: f.actor }, { querySelector: () => null }, []);
   assert.equal(f.details.querySelector('[data-rme-proficiencies]'), null);
+});
+
+test('Rogue class grants are collapsed after catalog categories and before standalone items, with refreshed tiers and open state', () => {
+  const f = fixture();
+  const manual = { items: { 'firearms/bolt-action-rifle': 'proficient' } };
+  f.actor.items = [{ id: 'rogue', type: 'class', name: 'Rogue', system: { classIdentifier: 'rogue', advancement: [] } }];
+  f.actor.system.details = { originalClass: 'rogue' };
+  f.actor.getFlag = (_scope, key) => key === 'training' ? manual : undefined;
+  const render = () => renderActorRmeProficiencies({ document: f.actor }, f.element, catalog.equipment);
+  render();
+  const panel = f.details.querySelector('[data-rme-proficiencies]');
+  const sections = panel.children;
+  const weapons = sections.find((node) => node.children[0].textContent === 'RME Weapons');
+  const rows = weapons.children[1].children;
+  const classRow = rows.find((node) => descendants(node, 'details').some((d) => d.className === 'rme-proficiency-class-disclosure'));
+  const group = descendants(classRow, 'details')[0];
+  assert.equal(group.open, undefined);
+  assert.equal(group.getAttribute('data-class-label'), 'Rogue Weapons');
+  assert.equal(descendants(group, 'summary')[0].children[0].textContent, 'Rogue Weapons');
+  assert.ok(rows.indexOf(classRow) > rows.findLastIndex((node) => node.children[0]?.textContent === 'Natural Weapons'));
+  assert.equal(rows.at(-1).children[0].textContent, 'Bolt-Action Rifle');
+  const shortbow = descendants(group, 'li').find((li) => li.children[0]?.textContent === 'Shortbow');
+  assert.ok(shortbow);
+  assert.equal(shortbow.children[1].textContent, 'Proficient');
+  const oldCount = descendants(group, 'summary')[0].children.at(-1).textContent;
+  group.open = true;
+  manual.items['bows/shortbow'] = 'expert';
+  render();
+  const updated = descendants(panel, 'details').find((d) => d.className === 'rme-proficiency-class-disclosure');
+  assert.equal(updated.open, true);
+  assert.equal(descendants(updated, 'summary')[0].children.at(-1).textContent, oldCount);
+  assert.equal(descendants(updated, 'summary')[0].children[1].textContent, 'Mixed tiers');
+  assert.equal(descendants(updated, 'li').find((li) => li.children[0]?.textContent === 'Shortbow').children[1].textContent, 'Expert');
+  manual.items['bows/shortbow'] = 'untrained';
+  render();
+  const reduced = descendants(panel, 'details').find((d) => d.className === 'rme-proficiency-class-disclosure');
+  assert.equal(reduced.open, true);
+  assert.notEqual(descendants(reduced, 'summary')[0].children.at(-1).textContent, oldCount);
+  assert.equal(descendants(reduced, 'li').some((li) => li.children[0]?.textContent === 'Shortbow'), false);
+  assert.equal(descendants(panel, 'details').filter((d) => d.className === 'rme-proficiency-class-disclosure').length, 1);
 });

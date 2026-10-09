@@ -118,9 +118,23 @@ test('training dialog is source-derived and exposes source gaps and choice contr
   assert.match(source, /data-choice-provider/);
   assert.match(source, /picture\.gaps/);
   assert.match(source, /picture\.sources/);
+  assert.match(source, /data-rme-source-choices/);
+  assert.match(source, /class="rme-source-grants"/);
+  assert.match(source, /namesById\.get\(id\)\|\|id/);
+  assert.match(source, /esc\(level\)/);
   assert.match(source, /syncActorRme\(actor,data\.equipment\)/);
   assert.doesNotMatch(source, /data-rme-apply-class|Optional starting-class training/);
   assert.match(source, /await dlg\.render\(true\);[\s\S]*?addEventListener\('input'/);
+});
+
+test('training source grants disclose named exact-tier categories and items safely', async () => {
+  const source=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8');
+  assert.match(source, /<details class="rme-source-grants"><summary>/);
+  assert.match(source, /<h4>Categories<\/h4>/);
+  assert.match(source, /<h4>Items<\/h4>/);
+  assert.match(source, /esc\(namesById\.get\(id\)\|\|id\)/);
+  assert.match(source, /<details class="rme-training-panel" data-rme-source-choices><summary>Source choices<\/summary>/);
+  assert.match(source, /data-choice-kind="\$\{kind\}"/);
 });
 
 test('training dialog uses a scrollable viewport-bounded section and responsive dimensions', async () => {

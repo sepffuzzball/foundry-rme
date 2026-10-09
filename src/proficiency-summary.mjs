@@ -21,11 +21,36 @@
 // expert when all seven are expert), listing Unarmed Strike as an untrained
 // exception when applicable.
 //
-// When no reliable baseline exists the group emits only its positive individual
-// rows. A category never appears with all members untrained, untrained members
-// are never top-level, and specific expert items are preserved under a
-// proficient category (and specific proficient items under an expert category)
-// as an indented item row with its actual level.
+// In addition to the native catalog categories, the summary compactly groups
+// classes' direct weapon grants into a single `kind: 'class'` row per class
+// source and, for shields only, may emit a class-derived Shields category:
+//
+//   - Class weapon rows gather the direct item grants of a `type: 'class'`
+//     source that are weapons, effective-positive and NOT already covered by a
+//     positive catalog category of their weapon group. An item is covered even
+//     when it is the group's positive exception, so a class row never duplicates
+//     a catalog category item. Item ids are de-duplicated across class sources by
+//     first source. The row header level is only set when every included item
+//     carries the identical effective level; otherwise it is null.
+//   - Shield categories come from a class source only when the Shields group is
+//     not uniformly positive and carries no explicit positive group state, when
+//     a `type: 'class'` source grants at least half of the catalog shield
+//     entries directly at a positive level and at least half of the total
+//     shields remain effective-positive among that source's shield ids. The
+//     baseline tier is the chosen source's positive shield-grant tier, picked
+//     deterministically by highest coverage then source order; every shield with
+//     a differing effective level (untrained or basic included) is listed as an
+//     exception. A suppressed-all manual state and an isolated shield grant
+//     never produce a category. An explicit manual Shields group state that is
+//     nonpositive ('untrained' or 'basic') overrides automation and suppresses
+//     the class-derived category entirely, so only standalone positive item
+//     rows survive.
+//
+// Output rows are ordered category-first: positive catalog categories first
+// (alphabetical), then class rows in `picture.sources` order, then standalone
+// positive individual items (alphabetical). Armor follows the same category-
+// first rule. Natural weapons stay in their native catalog group baseline and
+// never enter a class row.
 //
 // "Basic" is not "Proficient": a Basic item is nonpositive, so it never counts
 // toward a category baseline and is never shown as a positive top-level or
@@ -68,6 +93,15 @@ function effectiveGroupLevel(key, manual, derived) {
   if (hasOwn(mGroups, key)) return normalizeLevel(mGroups[key]);
   if (hasOwn(dGroups, key)) return normalizeLevel(dGroups[key]);
   return null;
+}
+
+// Whether an explicit manual group state is nonpositive ('untrained' or
+// 'basic'). Such a state suppresses any class-derived category for that group,
+// so the caller falls through to standalone positive item rows instead.
+function manualGroupStateIsNonpositive(groups, key) {
+  if (!hasOwn((groups || {}), key)) return false;
+  const level = normalizeLevel(groups[key]);
+  return level === 'untrained' || level === 'basic';
 }
 
 // Build the armor / weapon group buckets and the list of armor entries that are
@@ -160,28 +194,15 @@ function chooseBaseline(members, baselineKey, manual, derived) {
   return null;
 }
 
-// Build the output blocks for a group. A returned array is empty when the group
-// has nothing positive to show; a single block carries either a category row
-// plus its positive-exception item rows, or one standalone item row per positive
-// member when no category baseline exists.
-function summarizeGroup(group, effective, manual, derived) {
-  const members = collectMembers(group.entries, effective);
-  const baseline = chooseBaseline(members, group.baselineKey, manual, derived);
+// Build an individual standalone item block for a single positive entry.
+function itemBlock(name, level) {
+  return { sortLabel: name, kind: 'item', rows: [{ kind: 'item', label: name, level }] };
+}
 
-  if (baseline === null) {
-    const blocks = [];
-    for (const member of members) {
-      if (isPositive(member.level)) {
-        blocks.push({
-          sortLabel: member.entry.name,
-          kind: 'item',
-          rows: [{ kind: 'item', label: member.entry.name, level: member.level }],
-        });
-      }
-    }
-    return blocks;
-  }
-
+// Build the category block for a group with a positive baseline, preserving the
+// existing category/item shape: a category row followed by its positive
+// exception item rows (indented) and the exceptions array on the category row.
+function buildCategoryBlock(group, members, baseline) {
   const exceptions = [];
   const itemRows = [];
   for (const member of members) {
@@ -196,38 +217,205 @@ function summarizeGroup(group, effective, manual, derived) {
   itemRows.sort((a, b) => compareStrings(a.label, b.label));
 
   const categoryRow = { kind: 'category', label: group.label, level: baseline, exceptions };
-  return [{ sortLabel: group.label, kind: 'category', rows: [categoryRow, ...itemRows] }];
+  return { sortLabel: group.label, kind: 'category', rows: [categoryRow, ...itemRows] };
 }
 
-// Build standalone item blocks for armor entries not covered by the armor-name
-// map. Untrained items are never top-level.
-function individualBlocks(entries, effective) {
-  const blocks = [];
-  for (const entry of entries) {
-    const level = normalizeLevel(effective[entry.id]);
-    if (!isPositive(level)) continue;
-    blocks.push({
-      sortLabel: entry.name,
-      kind: 'item',
-      rows: [{ kind: 'item', label: entry.name, level }],
+// Build the class weapon rows from `picture.sources`, gathering the direct item
+// grants of each `type: 'class'` source that are weapons, effective-positive and
+// not covered by any positive catalog weapon category of their group. Item ids
+// are de-duplicated across class sources by first source. Returns `{ rows,
+// assigned }` where `rows` are the emitted class rows and `assigned` is the set
+// of item ids claimed by those rows.
+function buildClassWeaponRows(sources, equipment, effective, coveredGroups) {
+  const byId = new Map();
+  for (const entry of equipment) {
+    if (entry && entry.id && !byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+
+  const classSources = (Array.isArray(sources) ? sources : []).filter(
+    (s) => s && s.type === 'class' && s.grants && s.grants.items
+  );
+
+  const rows = [];
+  const assigned = new Set();
+  for (const source of classSources) {
+    const items = [];
+    const seenInSource = new Set();
+    for (const [id] of Object.entries(source.grants.items)) {
+      if (seenInSource.has(id)) continue;
+      seenInSource.add(id);
+      if (assigned.has(id)) continue;
+      const entry = byId.get(id);
+      if (!entry || entry.kind !== 'weapon') continue;
+      if (coveredGroups.has(entry.group)) continue;
+      const level = normalizeLevel(effective[id]);
+      if (!isPositive(level)) continue;
+      assigned.add(id);
+      items.push({ id, label: entry.name, level });
+    }
+
+    if (items.length === 0) continue;
+    items.sort((a, b) => compareStrings(a.label, b.label));
+    const uniform = items.every((it) => it.level === items[0].level);
+    rows.push({
+      kind: 'class',
+      label: `${source.label || 'Class'} Weapons`,
+      level: uniform ? items[0].level : null,
+      items: items.map((it) => ({ label: it.label, level: it.level })),
     });
   }
-  return blocks;
+
+  return { rows, assigned };
 }
 
-// Sort blocks alphabetically by their sort label, breaking ties so a category
-// block precedes a standalone item block with the same label, then flatten into
-// the row list. A category block stays together with its indented item rows.
-function finalize(blocks) {
-  blocks.sort((a, b) => {
-    const byLabel = compareStrings(a.sortLabel, b.sortLabel);
-    if (byLabel !== 0) return byLabel;
-    const byKind = a.kind === 'category' ? 0 : 1;
-    const otherKind = b.kind === 'category' ? 0 : 1;
-    return byKind - otherKind;
-  });
+// Build a class-derived Shields category, or null when no single `type: 'class'`
+// source grants at least half of the catalog shield entries directly at a
+// positive level AND at least half of the total shields remain effective-
+// positive among that source's shield ids. The chosen source (highest coverage,
+// then source order) provides the baseline tier; every shield with a differing
+// effective level is listed as an exception.
+function buildClassShieldsCategory(members, sources, effective) {
+  const total = members.length;
+  if (total === 0) return null;
+  const half = Math.ceil(total / 2);
+
+  const classSources = (Array.isArray(sources) ? sources : []).filter(
+    (s) => s && s.type === 'class' && s.grants && s.grants.items
+  );
+
+  let best = null;
+  for (const source of classSources) {
+    const grants = source.grants.items;
+    const granted = members.filter((m) => hasOwn(grants, m.entry.id));
+    const directPositive = granted.filter((m) => isPositive(grants[m.entry.id]));
+    if (directPositive.length < half) continue;
+    const effPositive = granted.filter((m) => isPositive(effective[m.entry.id]));
+    if (effPositive.length < half) continue;
+    if (!best || granted.length > best.granted.length) {
+      best = { source, granted };
+    }
+  }
+  if (!best) return null;
+
+  let hasExpert = false;
+  let hasProf = false;
+  for (const member of best.granted) {
+    const lvl = normalizeLevel(best.source.grants.items[member.entry.id]);
+    if (lvl === 'expert') hasExpert = true;
+    else if (lvl === 'proficient') hasProf = true;
+  }
+  const baseline = hasExpert ? 'expert' : hasProf ? 'proficient' : null;
+  if (baseline === null) return null;
+
+  const exceptions = [];
+  const itemRows = [];
+  for (const member of members) {
+    if (member.level !== baseline) {
+      exceptions.push({ label: member.entry.name, level: member.level });
+      if (isPositive(member.level)) {
+        itemRows.push({ kind: 'item', label: member.entry.name, level: member.level });
+      }
+    }
+  }
+  exceptions.sort((a, b) => compareStrings(a.label, b.label));
+  itemRows.sort((a, b) => compareStrings(a.label, b.label));
+
+  const categoryRow = {
+    kind: 'category',
+    label: SHIELD_GROUP_KEY,
+    level: baseline,
+    exceptions,
+  };
+  return { sortLabel: SHIELD_GROUP_KEY, kind: 'category', rows: [categoryRow, ...itemRows] };
+}
+
+// Summarize the weapon groups. Positive catalog categories are emitted first
+// (alphabetical), then class weapon rows in `picture.sources` order, then any
+// remaining uncovered positive weapons with no class source as standalone
+// individual items (alphabetical).
+function summarizeWeaponGroups(groups, effective, manual, derived, sources, equipment) {
+  const categoryBlocks = [];
+  const coveredGroups = new Set();
+  const uncovered = [];
+
+  for (const group of groups.values()) {
+    const members = collectMembers(group.entries, effective);
+    const baseline = chooseBaseline(members, group.baselineKey, manual, derived);
+    if (baseline === null) {
+      for (const member of members) {
+        if (isPositive(member.level)) uncovered.push(member);
+      }
+    } else {
+      coveredGroups.add(group.label);
+      categoryBlocks.push(buildCategoryBlock(group, members, baseline));
+    }
+  }
+  categoryBlocks.sort((a, b) => compareStrings(a.sortLabel, b.sortLabel));
+
+  const { rows: classRows, assigned } = buildClassWeaponRows(
+    sources,
+    equipment,
+    effective,
+    coveredGroups
+  );
+
+  const itemBlocks = [];
+  for (const member of uncovered) {
+    if (assigned.has(member.entry.id)) continue;
+    itemBlocks.push(itemBlock(member.entry.name, member.level));
+  }
+  itemBlocks.sort((a, b) => compareStrings(a.sortLabel, b.sortLabel));
+
   const rows = [];
-  for (const block of blocks) rows.push(...block.rows);
+  for (const block of categoryBlocks) rows.push(...block.rows);
+  for (const row of classRows) rows.push(row);
+  for (const block of itemBlocks) rows.push(...block.rows);
+  return rows;
+}
+
+// Summarize the armor output: positive catalog armor categories first
+// (alphabetical, including a class-derived Shields category when eligible), then
+// any uncovered standalone positive armor items (alphabetical). There are no
+// class rows in the armor list.
+function summarizeArmorGroups(armorGroups, armorIndividual, effective, manual, derived, sources) {
+  const categoryBlocks = [];
+  const standalone = [];
+
+  for (const entry of armorIndividual) {
+    const level = normalizeLevel(effective[entry.id]);
+    if (isPositive(level)) standalone.push({ entry, level });
+  }
+
+  for (const group of armorGroups.values()) {
+    const members = collectMembers(group.entries, effective);
+    const baseline = chooseBaseline(members, group.baselineKey, manual, derived);
+    if (baseline !== null) {
+      categoryBlocks.push(buildCategoryBlock(group, members, baseline));
+      continue;
+    }
+    if (
+      group.label === SHIELD_GROUP_KEY &&
+      !manualGroupStateIsNonpositive(manual.groups, SHIELD_GROUP_KEY)
+    ) {
+      const shieldCategory = buildClassShieldsCategory(members, sources, effective);
+      if (shieldCategory) {
+        categoryBlocks.push(shieldCategory);
+        continue;
+      }
+    }
+    for (const member of members) {
+      if (isPositive(member.level)) standalone.push({ entry: member.entry, level: member.level });
+    }
+  }
+
+  categoryBlocks.sort((a, b) => compareStrings(a.sortLabel, b.sortLabel));
+  const itemBlocks = standalone
+    .map((item) => itemBlock(item.entry.name, item.level))
+    .sort((a, b) => compareStrings(a.sortLabel, b.sortLabel));
+
+  const rows = [];
+  for (const block of categoryBlocks) rows.push(...block.rows);
+  for (const block of itemBlocks) rows.push(...block.rows);
   return rows;
 }
 
@@ -235,27 +423,33 @@ function finalize(blocks) {
 //
 // `equipment` is an iterable of catalog entries; `picture` is the result of
 // `computeActorTraining` and must expose `effective.items` (the per-item
-// effective level map), plus the optional `manual` / `derived` group states used
-// to honor manual-overrides-automation precedence. No input is mutated and no
-// Foundry global is touched.
+// effective level map), the optional `manual` / `derived` group states used to
+// honor manual-overrides-automation precedence, and the optional `sources`
+// array used to group class-origin weapon grants and class shield grants. No
+// input is mutated and no Foundry global is touched.
 export function summarizeRmeProficiencies(equipment, picture) {
   const effective = picture?.effective?.items || {};
   const manual = picture?.manual || {};
   const derived = picture?.derived || {};
+  const sources = picture?.sources || [];
   const { armorGroups, weaponGroups, armorIndividual } = buildGroups(equipment);
 
-  const armorBlocks = individualBlocks(armorIndividual, effective);
-  for (const group of armorGroups.values()) {
-    armorBlocks.push(...summarizeGroup(group, effective, manual, derived));
-  }
+  const armor = summarizeArmorGroups(
+    armorGroups,
+    armorIndividual,
+    effective,
+    manual,
+    derived,
+    sources
+  );
+  const weapons = summarizeWeaponGroups(
+    weaponGroups,
+    effective,
+    manual,
+    derived,
+    sources,
+    equipment
+  );
 
-  const weaponBlocks = [];
-  for (const group of weaponGroups.values()) {
-    weaponBlocks.push(...summarizeGroup(group, effective, manual, derived));
-  }
-
-  return {
-    armor: finalize(armorBlocks),
-    weapons: finalize(weaponBlocks),
-  };
+  return { armor, weapons };
 }

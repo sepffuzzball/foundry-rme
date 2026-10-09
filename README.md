@@ -144,7 +144,10 @@ catalog Items to the result. Derivation does not run the native dnd5e class
 advancement; it follows source-specific rules.
 
 Character sheets also show a read-only **RME Armor** and **RME Weapons** summary
-in the Details tab beside the native proficiency pills. Expert tiers are marked
+in the Details tab beside the native proficiency pills. Class-granted weapon
+items are grouped under collapsed, keyboard-operable disclosures (for example,
+Rogue Weapons); a group badge appears only for a uniform tier, while mixed groups
+show each actual item tier when expanded. Expert tiers are marked
 with an Expert badge; expand the exception count to see each item's actual
 training, including exclusions - this works by keyboard. If a group is not
 trained, its positive individual items appear instead. These RME summaries do
@@ -175,6 +178,10 @@ Original-class and multiclass weapon-category choices (8 and 4, respectively)
 and expert/subclass item choices are prompted in the RME Training dialog rather
 than guessed, and these source-linked choices are saved against the provider
 that granted them.
+The source-grant list uses collapsed disclosures showing exact category and
+named-item grant tiers; the separate **Source choices** panel is also collapsed
+by default, with its checkbox controls still available to Save. Class shield
+grants can appear as the **Shields** category in the effective summary.
 
 Gaps are reported only for something the module can see on an embedded
 supported source but cannot map safely: an unsupported class identifier, an
