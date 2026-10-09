@@ -57,33 +57,28 @@
 .rme-magazine-badge { display:inline-block; margin-inline-start:.35rem; padding:.08rem .35rem; border:1px solid var(--color-border-light-2, #777); border-radius:999px; background:color-mix(in srgb, var(--color-text-light-0, #fff) 88%, transparent); color:var(--color-text-dark-primary, #222); font-size:.72em; font-weight:700; line-height:1.35; white-space:nowrap; vertical-align:middle; }
 [data-theme="dark"] .rme-magazine-badge { background:color-mix(in srgb, var(--color-text-dark-1, #222) 88%, transparent); color:var(--color-text-light-1, #eee); }
 
-/* Read-only actor Details view for effective RME training. */
-.rme-proficiencies { margin:1rem 0; padding:.8rem 1rem; border:1px solid var(--color-border-light-2); border-inline-start:4px solid #9c5639; border-radius:8px; }
-.rme-proficiency-section + .rme-proficiency-section { margin-top:.8rem; padding-top:.6rem; border-top:1px solid var(--color-border-light-2); }
-.rme-proficiency-section h3 { margin:0 0 .4rem; font-size:1rem; }
-.rme-proficiency-list { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; }
-.rme-proficiency-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem; }
-.rme-proficiency-item { padding-inline-start:1.25rem; font-size:.92em; }
-.rme-proficiency-badge { display:inline-block; padding:.08rem .4rem; border:1px solid var(--color-border-light-2); border-radius:999px; background:var(--color-bg-option, #eee); color:var(--color-text-dark-primary, #222); font-size:.75em; font-weight:700; line-height:1.4; }
-.rme-proficiency-expert { border-color:#603400; background:#7a3e00; color:#fff; }
-[data-theme="dark"] .rme-proficiency-badge { background:#333; color:#fff; }
-[data-theme="dark"] .rme-proficiency-expert { background:#f0a442; border-color:#ffd28c; color:#211300; }
-.rme-proficiency-exceptions { flex:0 0 100%; min-width:0; font-size:.82em; }
-.rme-proficiency-exceptions summary { display:list-item; width:max-content; max-width:100%; padding:.12rem .25rem; border-radius:3px; cursor:pointer; color:var(--color-text-dark-primary, #222); text-decoration:underline; text-underline-offset:2px; }
-.rme-proficiency-exceptions summary:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
-.rme-proficiency-exceptions ul { margin:.25rem 0 .15rem 1.25rem; padding-inline-start:.75rem; list-style:disc; }
-.rme-proficiency-exceptions li { display:list-item; margin:.12rem 0; overflow-wrap:anywhere; }
-.rme-proficiency-class-disclosure { flex:0 0 100%; }
-.rme-proficiency-class-disclosure > summary { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem; cursor:pointer; list-style:none; }
+/* Read-only actor Details pills; scoped fallbacks only when dnd5e pill styles are absent. */
+.rme-proficiencies { margin:.55rem 0; min-width:0; }
+.rme-proficiencies .rme-proficiency-section { margin:.45rem 0; padding:0; border:0; }
+.rme-proficiencies .rme-proficiency-section > h3 { display:flex; align-items:center; gap:.4rem; margin:0 0 .25rem; font-size:.82rem; }
+.rme-proficiencies .rme-proficiency-section > h3 dnd5e-icon { width:1em; height:1em; }
+.rme-proficiencies ul.pills { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem; min-width:0; margin:.2rem 0; padding:0; list-style:none; }
+.rme-proficiencies li.pill { position:relative; display:inline-flex; align-items:center; gap:.2rem; max-width:100%; min-width:0; margin:0; padding:.25rem .5rem; border:var(--pill-border,1px solid var(--color-border-light-2,#777)); border-radius:3px; background:var(--dnd5e-background-card,var(--color-bg-option,#eee)); color:var(--color-text-dark-primary,#222); font-family:Roboto, sans-serif; font-size:inherit; font-weight:700; line-height:1.35; text-transform:uppercase; overflow-wrap:anywhere; }
+.theme-dark .rme-proficiencies li.pill { background:var(--dnd5e-background-card,var(--color-bg-option,#303030)); color:var(--color-text-light-1,#eee); }
+.rme-proficiencies li.rme-proficiency-expert, .rme-proficiencies .rme-proficiency-tier.rme-proficiency-expert { border-color:#874313; background:#f2c18b; color:#321b0b; font-weight:700; }
+.theme-dark .rme-proficiencies li.rme-proficiency-expert, .theme-dark .rme-proficiencies .rme-proficiency-tier.rme-proficiency-expert { border-color:#f2c18b; background:#6c3515; color:#fff2e5; }
+.rme-proficiency-expert-cue { font-size:.88em; }
+.rme-proficiencies .rme-proficiency-class { display:block; padding:.25rem .5rem; }
+.rme-proficiency-class-disclosure > summary { display:flex; align-items:center; flex-wrap:wrap; gap:.25rem; cursor:pointer; list-style:none; }
 .rme-proficiency-class-disclosure > summary::-webkit-details-marker { display:none; }
-.rme-proficiency-class-disclosure > summary::before { content:"\\25B6"; display:inline-block; flex:0 0 1em; font-size:.72em; transition:transform .15s ease; }
+.rme-proficiency-class-disclosure > summary::before { content:"\25B6"; display:inline-block; flex:0 0 auto; font-size:.68em; }
 .rme-proficiency-class-disclosure[open] > summary::before { transform:rotate(90deg); }
-.rme-proficiency-class-disclosure > summary:focus-visible { outline:2px solid currentColor; outline-offset:2px; border-radius:3px; }
-.rme-proficiency-class-items { display:grid; gap:.25rem; margin:.35rem 0 .2rem 1.25rem; padding-inline-start:1rem; list-style:disc; }
-.rme-proficiency-class-items li { display:list-item; }
-.rme-proficiency-count { font-size:.78em; opacity:.75; }
-@media (max-width:600px) {
-  .rme-proficiency-exceptions { flex-basis:100%; }
-  .rme-proficiency-exceptions ul { margin-inline-start:.5rem; }
-}
+.rme-proficiency-class-disclosure > summary:focus-visible, .rme-proficiency-exceptions > summary:focus-visible { outline:2px solid currentColor; outline-offset:2px; border-radius:3px; }
+.rme-proficiency-count { font-size:.78em; opacity:.78; }
+.rme-proficiencies .rme-proficiency-exceptions { flex-basis:auto; font-size:.85em; }
+.rme-proficiency-exceptions > summary { display:list-item; cursor:pointer; white-space:nowrap; text-decoration:underline; text-underline-offset:2px; }
+.rme-proficiency-exceptions ul { display:block !important; margin:.35rem 0 .15rem 1rem !important; padding-inline-start:1rem !important; list-style:disc !important; }
+.rme-proficiency-exceptions li { display:list-item !important; margin:.12rem 0; }
+.rme-proficiencies .rme-proficiency-class-items { margin:.35rem 0 .1rem !important; padding:0 !important; }
+.rme-proficiencies .rme-proficiency-class-items > li { white-space:normal; }
 @media(max-width:600px) { .rme-item-heading { display:block; } .rme-item-tier { margin:.4rem 0; } .rme-item-properties { columns:1; } }

@@ -143,13 +143,16 @@ derives the actor's RME weapon/armor training and synchronizes the actor's
 catalog Items to the result. Derivation does not run the native dnd5e class
 advancement; it follows source-specific rules.
 
-Character sheets also show a read-only **RME Armor** and **RME Weapons** summary
-in the Details tab beside the native proficiency pills. Class-granted weapon
-items are grouped under collapsed, keyboard-operable disclosures (for example,
-Rogue Weapons); a group badge appears only for a uniform tier, while mixed groups
-show each actual item tier when expanded. Expert tiers are marked
-with an Expert badge; expand the exception count to see each item's actual
-training, including exclusions - this works by keyboard. If a group is not
+Character sheets also show compact, wrapping read-only **RME Armor** and **RME
+Weapons** proficiency chips in the Details tab beside the native pills. Expert
+chips use a distinct warm color and star, with a tooltip and accessible name
+identifying the tier. Class-granted weapon items are grouped under collapsed,
+keyboard-operable disclosures (for example, Rogue Weapons); mixed groups are
+identified as such and show each actual item tier as chips when expanded.
+Categories with untrained or basic items expose a keyboard-operable exclusion
+disclosure naming each item and exact tier; positive tier differences appear
+once as their own chips, with a category tooltip noting the different tier. If a
+group is not
 trained, its positive individual items appear instead. These RME summaries do
 not edit or replace native dnd5e armor or weapon traits.
 
