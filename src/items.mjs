@@ -21,10 +21,26 @@
 //     keys), so they surface as weapon-property checkboxes without touching the
 //     native property space. The active tier, its granted properties, and the
 //     expert perk are recorded in the `foundry-rme` flag block.
+//   - A conservative subset of shared RME weapon properties (Two-Handed, Finesse,
+//     melee Reach, and unambiguous Versatile) is promoted into native dnd5e keys
+//     (`two` / `fin` / `rch` / `ver`), and a genuinely Versatile weapon carries
+//     its parsed two-handed die in `system.damage.versatile`. The module owns
+//     only the keys it wrote: the promoted native keys are tracked in the
+//     `foundry-rme.nativeProperties` flag and the written Versatile damage in
+//     `nativeVersatileDamage` (with a snapshot of the exact value written), so
+//     a user-added native key (or a user-set Versatile die) is never clobbered
+//     and never removed on a later tier drop. The `nativeVersatileManual` flag
+//     records whether the user has manually set/cleared the Versatile value: a
+//     user-cleared zero die is preserved, while a native dnd5e default zero
+//     (or a value the module itself cleared on a prior non-Versatile tier) is
+//     left reclaimable so the module die can be written / restored later.
 
 import { LEVELS, selectTier, resolveTraining } from './training.mjs';
 import { parsePhysical, tierProperties, rmeWeaponType } from './rme-metadata.mjs';
 import { magazineCapacity, reloadOptions } from './ammunition.mjs';
+import { equipmentDescriptions } from './item-descriptions.mjs';
+import { ICON_MAP } from './icon-map.mjs';
+import { nativeProfile } from './native-properties.mjs';
 
 export const FLAGS_KEY = 'foundry-rme';
 
@@ -291,13 +307,145 @@ function rmeFlags(entry, level, props) {
   };
 }
 
-// Merge the tier-granted RME properties into an existing property array,
-// replacing only the module-owned `rme-*` keys while preserving every native and
-// user-added (non-RME) property verbatim. Stale RME keys no longer granted by the
-// selected tier are dropped; the granted ones are appended in canonical order.
-function mergeProperties(existing, props) {
-  const nonRme = typesOf(existing).filter((key) => !key.startsWith('rme-'));
-  return [...nonRme, ...props.map((p) => p.key)];
+// Merge the tier-granted RME properties and the native dnd5e weapon-property
+// keys into an existing property array. `ownedNativeKeys` is the module-owned
+// native key list previously recorded in the foundry-rme flag (from a prior
+// sync); `native` is the native profile for the selected tier.
+//
+// Rules:
+//   - `rme-*` keys are always replaced by the selected tier's granted keys (each
+//     stale RME key not granted by the tier is dropped; a granted key that was
+//     already present stays in place, and a granted key not already present is
+//     appended).
+//   - A native key previously recorded in `ownedNativeKeys` is module-owned: it
+//     is removed and replaced by the selected tier's native keys, so a module
+//     key no longer granted by the tier is dropped (never left as a stale
+//     module value).
+//   - A native key already present on the item but NOT recorded in
+//     `ownedNativeKeys` is user-owned: it is preserved verbatim and never
+//     claimed, so it survives even when a later tier no longer grants it.
+//   - A native key newly added by the module (granted by the tier and not
+//     already present) is claimed and recorded, so a later tier drop can remove
+//     only keys the module actually owns.
+//
+// Returns `{ properties, nativeOwned }` where `nativeOwned` is the updated
+// module-owned native key list to store in the foundry-rme flag.
+function mergeNativeProperties(currentKeys, ownedNativeKeys, props, native) {
+  const present = typesOf(currentKeys);
+  const owned = new Set(typesOf(ownedNativeKeys));
+  const granted = native.keys;
+  const grantedRme = new Set(props.map((p) => p.key));
+
+  // Preserve the item's existing ordering where possible: a still-granted rme-*
+  // key stays in place, a stale rme-* key is dropped, a module-owned native key
+  // is dropped (it is re-added canonically below if still granted), and every
+  // other key (a user key, or an untracked user-set native key) is kept verbatim
+  // in its original position. Newly granted keys are appended at the end.
+  const properties = [];
+  for (const key of present) {
+    if (key.startsWith('rme-')) {
+      if (grantedRme.has(key)) properties.push(key);
+      continue;
+    }
+    if (owned.has(key)) continue;
+    properties.push(key);
+  }
+  for (const prop of props) {
+    if (!properties.includes(prop.key)) properties.push(prop.key);
+  }
+  for (const key of granted) {
+    if (!properties.includes(key)) properties.push(key);
+  }
+
+  // Only keys the module actually owns are tracked. A key that was previously
+  // owned and is still granted stays owned; a key newly added by this sync is
+  // claimed; a key already present but never tracked (and not just re-added here)
+  // is left to the user and never claimed.
+  const newOwned = new Set();
+  for (const key of typesOf(ownedNativeKeys)) {
+    if (granted.includes(key)) newOwned.add(key);
+  }
+  for (const key of granted) {
+    if (newOwned.has(key)) continue;
+    if (present.includes(key) && !owned.has(key)) continue;
+    newOwned.add(key);
+  }
+
+  return { properties, nativeOwned: sortedKeys(newOwned) };
+}
+
+// Sort and de-duplicate a native key list so the module-owned flag is always
+// written in a stable order (idempotent flag comparison).
+function sortedKeys(keys) {
+  return [...new Set(typesOf(keys))].sort();
+}
+
+// ---------------------------------------------------------------------------
+// Versatile damage
+// ---------------------------------------------------------------------------
+
+// Whether a Versatile damage value is absent or a native dnd5e zero/default
+// object (number 0 / denomination 0) that the module may safely reclaim with
+// its parsed die. A user-cleared die (number 0 / denomination 0) that must be
+// preserved is distinguished by the `nativeVersatileManual` marker: this
+// helper is only ever consulted when that marker is false, so a user-cleared
+// zero never reaches here. Only a fully missing (undefined / null) value or a
+// number 0 / denomination 0 die is treated as a reclaimable module default.
+function versatileEmptyOrDefault(value) {
+  return !value || (value.number === 0 && value.denomination === 0);
+}
+
+// Build the module-owned Versatile damage object. The dice come from the parsed
+// native Versatile die; the bonus and damage types mirror the base damage, so a
+// user enchant/bonus or damage type on the one-handed mode is never silently
+// dropped from the two-handed mode. Never copies the base dice (the base and
+// Versatile dice differ).
+function versatileDamageValue(entry, native, base) {
+  const bonus = base?.bonus ?? '';
+  const types = typesOf(base?.types);
+  return {
+    number: native.versatile.number,
+    denomination: native.versatile.denomination,
+    bonus,
+    types: types.length > 0 ? types : damageTypesOf(entry),
+  };
+}
+
+// The "cleared" Versatile damage used when a tier no longer grants Versatile:
+// zero dice and a blank bonus, while any damage types are preserved so a user
+// type selection is not lost. Only ever written over a module-owned value.
+function clearedVersatileDamage(current) {
+  return {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: typesOf(current?.types),
+  };
+}
+
+// The normalized snapshot of a written native Versatile damage value, used to
+// detect a later user edit by comparing the live value to what the module last
+// wrote. Only the module-owned fields are recorded; any dnd5e schema defaults a
+// live value carries are ignored, and types are normalized to an array.
+function snapshotOfVersatile(value) {
+  if (!value) return null;
+  return {
+    number: value.number,
+    denomination: value.denomination,
+    bonus: value.bonus,
+    types: typesOf(value.types),
+  };
+}
+
+// Whether two native Versatile snapshots are equal as module-owned records. An
+// absent snapshot and an explicit null are equivalent (both mean "no snapshot"),
+// so a sync compares idempotently even when the field was never written.
+function snapshotEqual(a, b) {
+  const na = a && typeof a === 'object' ? a : null;
+  const nb = b && typeof b === 'object' ? b : null;
+  if (!na && !nb) return true;
+  if (!na || !nb) return false;
+  return versatileEqual(na, nb);
 }
 
 // Repairs a legacy zero / null / missing weight or price from the parsed source,
@@ -394,35 +542,69 @@ export function reloadActivityData(entry, level = 'untrained') {
 // training level. Returns an object suitable for `Item.create`.
 //
 // The payload is module-owned throughout: it sets the RME weapon category, the
-// tier-granted `rme-*` weapon properties, the parsed physical stats (weight /
-// price, never fabricated for natural weapons which have none), proficient
-// state, and the module flag block (catalogId, group, activeTier, the resolved
-// activeProperties, and expertPerk).
+// tier-granted `rme-*` weapon properties, the promoted native dnd5e weapon
+// property keys (two / fin / rch / ver) and, for a genuinely Versatile weapon,
+// the parsed two-handed `system.damage.versatile`, the parsed physical stats
+// (weight / price, never fabricated for natural weapons which have none),
+// proficient state, and the module flag block (catalogId, group, activeTier, the
+// resolved activeProperties, expertPerk, and the module-owned native property
+// list / Versatile damage ownership flag).
 export function makeItemData(entry, level = 'untrained') {
   const safeLevel = normalizeLevel(level);
   const kind = entry.kind;
   const tier = tierForEntry(entry, safeLevel);
   const tokens = collectDamageTokens(tier.rawRows);
   const props = tierProperties(entry, safeLevel);
+  const native = nativeProfile(entry, safeLevel);
   const physical = parsePhysical(entry);
+  const descriptions = equipmentDescriptions(entry);
 
   const payload = {
     name: entry.name,
     type: kind === 'weapon' || kind === 'natural' ? 'weapon' : 'equipment',
-    flags: { [FLAGS_KEY]: rmeFlags(entry, safeLevel, props) },
-    system: { description: { value: descriptionValue(entry.description) } },
+    img: ICON_MAP[entry.id],
+    flags: {
+      [FLAGS_KEY]: {
+        ...rmeFlags(entry, safeLevel, props),
+        nativeProperties: sortedKeys(native.keys),
+        nativeVersatileDamage: false,
+        nativeVersatileSnapshot: null,
+        nativeVersatileManual: false,
+      },
+    },
+    system: {
+      description: {
+        value: descriptions.identifiedHtml,
+        chat: descriptions.chatHtml,
+      },
+      unidentified: {
+        name: descriptions.unidentifiedName,
+        description: descriptions.unidentifiedHtml,
+      },
+    },
   };
 
   if (kind === 'weapon' || kind === 'natural') {
     payload.system.type = { value: weaponTypeOf(entry, tier.rawRows, tokens) };
     payload.system.proficient = proficientForLevel(safeLevel);
-    payload.system.properties = props.map((p) => p.key);
+    payload.system.properties = [...props.map((p) => p.key), ...native.keys];
 
     const base = tokens.length === 1 ? damageBaseFromToken(tokens[0], entry) : null;
     const reload = reloadActivityData(entry, safeLevel);
     const hasReload = Object.keys(reload).length > 0;
     if (base) {
       payload.system.damage = { base };
+    }
+    if (native.keys.includes('ver') && native.versatile) {
+      // A genuinely Versatile weapon carries a native `ver` property and its
+      // parsed two-handed die. The versatile damage never assumes the base dice;
+      // it takes the parsed die and mirrors the base bonus/types. The written
+      // value is snapshotted so a later user edit to any field can be detected.
+      payload.system.damage = payload.system.damage || {};
+      const versatileOverride = versatileDamageValue(entry, native, base);
+      payload.system.damage.versatile = versatileOverride;
+      payload.flags[FLAGS_KEY].nativeVersatileDamage = true;
+      payload.flags[FLAGS_KEY].nativeVersatileSnapshot = snapshotOfVersatile(versatileOverride);
     }
     if (hasReload) {
       // A magazine weapon carries its reload activities and an explicit native
@@ -462,38 +644,125 @@ export function makeItemData(entry, level = 'untrained') {
 }
 
 // ---------------------------------------------------------------------------
+// Description / unidentified / icon migration
+// ---------------------------------------------------------------------------
+
+// The legacy escaped `<pre>` of the verbatim source description that the
+// original mapper wrote into `system.description.value`. Used to detect an
+// item that still carries the old, un-curated description so it can be migrated
+// rather than preserved as user prose.
+function legacyDescriptionValue(entry) {
+  return descriptionValue(entry.description);
+}
+
+function blankOrMissing(value) {
+  return value === undefined || value === null || value === '';
+}
+
+// A legacy item's description.value is migrated only when it is blank (never
+// populated) or still exactly equals the legacy escaped `<pre>` wrapper of the
+// verbatim source description. Any other text is treated as user-authored prose
+// and preserved.
+function descriptionNeedsMigration(current, entry) {
+  const value = current?.description?.value;
+  return blankOrMissing(value) || value === legacyDescriptionValue(entry);
+}
+
+// The common Foundry default placeholder icons a legacy / un-populated item may
+// carry. Any other (user-curated) icon is preserved. An absent icon is treated
+// as needing the curated icon.
+const DEFAULT_ICON_PATHS = new Set([
+  'icons/svg/item-bag.svg',
+  'icons/svg/sword.svg',
+  'icons/svg/shield.svg',
+  'icons/svg/armor.svg',
+  'icons/svg/mystery-man.svg',
+]);
+
+function iconNeedsMigration(currentImg) {
+  return blankOrMissing(currentImg) || DEFAULT_ICON_PATHS.has(currentImg);
+}
+
+// The partial `system.description` update. `value` is replaced only when it is
+// blank or still the legacy `<pre>`; `chat` is filled only when blank/missing.
+// Returns an empty object when nothing needs to change, so no description field
+// is ever touched on an already-curated item.
+function descriptionPatch(current, entry, descriptions) {
+  const desc = current?.description || {};
+  const out = {};
+  if (descriptionNeedsMigration(current, entry)) {
+    out.value = descriptions.identifiedHtml;
+  }
+  if (blankOrMissing(desc.chat)) {
+    out.chat = descriptions.chatHtml;
+  }
+  return out;
+}
+
+// The partial `system.unidentified` update. Name/description are filled only
+// when blank/missing, so a user-set unidentified label is never overwritten.
+function unidentifiedPatch(current, descriptions) {
+  const unid = current?.unidentified || {};
+  const out = {};
+  if (blankOrMissing(unid.name)) {
+    out.name = descriptions.unidentifiedName;
+  }
+  if (blankOrMissing(unid.description)) {
+    out.description = descriptions.unidentifiedHtml;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // itemProfilePatch
 // ---------------------------------------------------------------------------
 
 // Build a differential update for an existing embedded item. Only module-owned
 // fields are returned: `system.type`, `system.proficient`, `system.properties`
-// (RME keys only, merged over the existing native/user properties), the parsed
-// physical stats repaired only when currently zero/null/missing, the module-owned
-// reload activities for a magazine weapon (as dotted `system.activities.<id>`
-// keys, plus the `.-=` deletion operator to drop a stale fast reload), the
-// module-owned default attack for a magazine weapon that has no attack yet (a
-// magazine weapon cannot rely on dnd5e auto-creating one), and the module flag
-// block (activeTier / activeProperties / expertPerk). Damage and
-// range follow the legacy conservative rules: a single unambiguous damage token
-// is promoted into `system.damage.base`, a sole ranged profile sets
-// `system.range`, and a tier with no single unambiguous attack profile
-// zeroes/clears prior module-owned native damage/range so a stale parseable
-// profile is not left behind. Name, description, enchantments, and any
-// non-module activity id are never included.
+// (the tier `rme-*` keys plus the promoted native keys, merged over the existing
+// native/user properties without clobbering user-owned native keys or Versatile
+// damage), the parsed physical stats repaired only when currently zero/null/
+// missing, the module-owned reload activities for a magazine weapon (as dotted
+// `system.activities.<id>` keys, plus the `.-=` deletion operator to drop a
+// stale fast reload), the module-owned default attack for a magazine weapon that
+// has no attack yet (a magazine weapon cannot rely on dnd5e auto-creating one),
+// and the module flag block (activeTier / activeProperties / expertPerk /
+// nativeProperties / nativeVersatileDamage). Damage and range follow the legacy
+// conservative rules: a single unambiguous damage token is promoted into
+// `system.damage.base`, a sole ranged profile sets `system.range`, and a tier
+// with no single unambiguous attack profile zeroes/clears prior module-owned
+// native damage/range so a stale parseable profile is not left behind. Name,
+// description, enchantments, and any non-module activity id are never included.
 export function itemProfilePatch(item, entry, level = 'untrained') {
   const safeLevel = normalizeLevel(level);
   const system = { proficient: proficientForLevel(safeLevel) };
   const props = tierProperties(entry, safeLevel);
+  const native = nativeProfile(entry, safeLevel);
   const current = item.system || {};
+  const descriptions = equipmentDescriptions(entry);
   const physical = repairPhysical(current, parsePhysical(entry));
   if (physical.weight) system.weight = physical.weight;
   if (physical.price) system.price = physical.price;
+
+  // The module-owned native property / Versatile ownership state, populated in
+  // the weapon branch (or left as the safe default for a non-weapon entry).
+  let nativeOwnedKeys = sortedKeys(native.keys);
+  let nativeVersatileDamage = false;
+  let nativeVersatileSnapshot = null;
+  let nativeVersatileManual = false;
 
   if (entry.kind === 'weapon' || entry.kind === 'natural') {
     const tier = tierForEntry(entry, safeLevel);
     const tokens = collectDamageTokens(tier.rawRows);
     system.type = { value: weaponTypeOf(entry, tier.rawRows, tokens) };
-    system.properties = mergeProperties(current.properties, props);
+    const merged = mergeNativeProperties(
+      current.properties,
+      item.flags?.[FLAGS_KEY]?.nativeProperties,
+      props,
+      native
+    );
+    system.properties = merged.properties;
+    nativeOwnedKeys = merged.nativeOwned;
     if (tokens.length === 1) {
       system.damage = { base: damageBaseFromToken(tokens[0], entry, item.system) };
       if (soleRangedProfile(tokens)) {
@@ -514,6 +783,97 @@ export function itemProfilePatch(item, entry, level = 'untrained') {
       system.damage = { base: clearedDamageBase(item.system) };
       if (item.system?.range) {
         system.range = clearedRange();
+      }
+    }
+
+    // Native Versatile damage. The module owns `system.damage.versatile` only
+    // when it wrote it (nativeVersatileDamage flag) and has a snapshot of the
+    // exact value it wrote; a user-set value that was never module-owned is
+    // preserved untouched. For a previously module-owned value the
+    // snapshot/live match is evaluated FIRST, so a user-cleared die (current
+    // number 0) is never mistaken for the safe default and rewritten; a
+    // mismatch or a missing snapshot preserves the current value and
+    // relinquishes ownership. The `nativeVersatileManual` marker tracks whether
+    // the user has manually set/cleared the value: when set, the current value
+    // (including a zero die) is always preserved; when clear, the module may
+    // write its parsed two-handed die into an absent or native zero/default
+    // value (including one the module itself cleared on a prior non-Versatile
+    // tier), so a module-cleared value is restored when a later tier grants
+    // Versatile again. Only a value that was NOT previously module-owned and is
+    // genuinely absent or a zero/default object (and not manual) may initiate a
+    // new module write of the parsed two-handed die (with the base bonus/
+    // types). When the tier drops Versatile, only a previously module-owned
+    // value whose live value still matches its snapshot is cleared (zero dice/
+    // blank bonus), never user data.
+    const currentVersatile = item.system?.damage?.versatile;
+    const currentFlag = item.flags?.[FLAGS_KEY] ?? {};
+    nativeVersatileManual = currentFlag.nativeVersatileManual === true;
+    const moduleOwnedVersatile = currentFlag.nativeVersatileDamage === true;
+    const snapshot = currentFlag.nativeVersatileSnapshot;
+    if (native.keys.includes('ver') && native.versatile) {
+      if (moduleOwnedVersatile) {
+        // Previously module-owned: evaluate the snapshot/live match FIRST, so a
+        // user-cleared die (current number 0) is never mistaken for the safe
+        // default/cleared shape and rewritten. A mismatch (or a legacy flag with
+        // no snapshot) means the user edited a field, so the current value is
+        // preserved untouched and ownership is relinquished; the manual marker
+        // is set so the user's value is never reclaimed by a later tier.
+        if (snapshot && typeof snapshot === 'object' && versatileEqual(currentVersatile, snapshot)) {
+          // Unchanged module-owned value: continue owning it and write the
+          // current tier's die (an upgrade/downgrade), then re-snapshot. The
+          // manual marker stays false: the value is module-written.
+          system.damage = system.damage || {};
+          const value = versatileDamageValue(entry, native, system.damage?.base);
+          system.damage.versatile = value;
+          nativeVersatileDamage = true;
+          nativeVersatileSnapshot = snapshotOfVersatile(value);
+          nativeVersatileManual = false;
+        } else {
+          // A user edit (including clearing the die to zero), or a legacy flag
+          // with no snapshot: leave the value alone and stop owning it.
+          nativeVersatileDamage = false;
+          nativeVersatileSnapshot = null;
+          nativeVersatileManual = true;
+        }
+      } else if (!nativeVersatileManual && versatileEmptyOrDefault(currentVersatile)) {
+        // Not previously module-owned, no manual marker, and the value is
+        // genuinely absent or a native zero/default object (a default dnd5e
+        // value, or a value the module itself cleared on a prior non-Versatile
+        // tier): write the parsed two-handed die and claim ownership.
+        system.damage = system.damage || {};
+        const value = versatileDamageValue(entry, native, system.damage?.base);
+        system.damage.versatile = value;
+        nativeVersatileDamage = true;
+        nativeVersatileSnapshot = snapshotOfVersatile(value);
+        nativeVersatileManual = false;
+      } else if (!nativeVersatileManual) {
+        // Not previously module-owned and not a zero/default object: a user-
+        // supplied nonempty value is preserved and the manual marker is set so
+        // it is never reclaimed by a later tier.
+        nativeVersatileDamage = false;
+        nativeVersatileSnapshot = null;
+        nativeVersatileManual = true;
+      } else {
+        // Manual marker set (a user-supplied or user-cleared value): preserve
+        // whatever is there (including a zero die) and do not claim ownership.
+        nativeVersatileDamage = false;
+        nativeVersatileSnapshot = null;
+        nativeVersatileManual = true;
+      }
+    } else if (moduleOwnedVersatile) {
+      // The tier no longer grants Versatile. Clear only when the live value
+      // still matches the snapshot (module-owned); a user edit is preserved
+      // untouched and ownership relinquished (with the manual marker set).
+      if (snapshot && typeof snapshot === 'object' && versatileEqual(currentVersatile, snapshot)) {
+        system.damage = system.damage || {};
+        system.damage.versatile = clearedVersatileDamage(currentVersatile);
+        nativeVersatileDamage = false;
+        nativeVersatileSnapshot = null;
+        nativeVersatileManual = false;
+      } else {
+        nativeVersatileDamage = false;
+        nativeVersatileSnapshot = null;
+        nativeVersatileManual = true;
       }
     }
 
@@ -549,14 +909,38 @@ export function itemProfilePatch(item, entry, level = 'untrained') {
     system.type = { value: 'shield' };
   }
 
+  // Curated description / unidentified / icon migration. Each is written only
+  // when the current value is still module-owned (blank, legacy `<pre>`, or the
+  // common Foundry placeholder icon), so user-authored prose, chat, and icon are
+  // never overwritten. A fully-curated item writes none of these keys, keeping
+  // the patch and the sync strictly module-owned and idempotent.
+  const descPatch = descriptionPatch(current, entry, descriptions);
+  if (Object.keys(descPatch).length > 0) {
+    system.description = { ...(current.description || {}), ...descPatch };
+  }
+  const unidPatch = unidentifiedPatch(current, descriptions);
+  if (Object.keys(unidPatch).length > 0) {
+    system.unidentified = { ...(current.unidentified || {}), ...unidPatch };
+  }
+  let img;
+  if (iconNeedsMigration(item.img)) {
+    img = ICON_MAP[entry.id];
+  }
+
   const flags = {
     [FLAGS_KEY]: {
       ...(item.flags?.[FLAGS_KEY] || {}),
       ...rmeFlags(entry, safeLevel, props),
+      nativeProperties: nativeOwnedKeys,
+      nativeVersatileDamage,
+      nativeVersatileSnapshot,
+      nativeVersatileManual,
     },
   };
 
-  return { _id: item._id, system, flags };
+  const patch = { _id: item._id, system, flags };
+  if (img !== undefined) patch.img = img;
+  return patch;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +948,16 @@ export function itemProfilePatch(item, entry, level = 'untrained') {
 // ---------------------------------------------------------------------------
 
 function damageBaseEqual(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.number === b.number &&
+    a.denomination === b.denomination &&
+    a.bonus === b.bonus &&
+    arraysEqual(typesOf(a.types), typesOf(b.types))
+  );
+}
+
+function versatileEqual(a, b) {
   if (!a || !b) return false;
   return (
     a.number === b.number &&
@@ -635,12 +1029,20 @@ function rmeFlagEqual(item, target) {
   const hasCurrent =
     current.activeTier !== undefined ||
     current.activeProperties !== undefined ||
-    current.expertPerk !== undefined;
+    current.expertPerk !== undefined ||
+    current.nativeProperties !== undefined ||
+    current.nativeVersatileDamage !== undefined ||
+    current.nativeVersatileSnapshot !== undefined ||
+    current.nativeVersatileManual !== undefined;
   if (!hasCurrent) return false;
   return (
     current.activeTier === targetFlags.activeTier &&
     deepEqual(current.activeProperties || [], targetFlags.activeProperties || []) &&
-    current.expertPerk === targetFlags.expertPerk
+    current.expertPerk === targetFlags.expertPerk &&
+    deepEqual(sortedKeys(current.nativeProperties), targetFlags.nativeProperties) &&
+    (current.nativeVersatileDamage === true) === (targetFlags.nativeVersatileDamage === true) &&
+    (current.nativeVersatileManual === true) === (targetFlags.nativeVersatileManual === true) &&
+    snapshotEqual(current.nativeVersatileSnapshot, targetFlags.nativeVersatileSnapshot)
   );
 }
 
@@ -737,12 +1139,22 @@ export async function syncActorItems(actor, equipment, training = {}) {
       (system.properties && !propertiesEqual(item.system?.properties, system.properties)) ||
       (system.damage?.base &&
         !damageBaseEqual(item.system?.damage?.base, system.damage.base)) ||
+      (system.damage?.versatile &&
+        !versatileEqual(item.system?.damage?.versatile, system.damage.versatile)) ||
       (system.range && !rangeEqual(item.system?.range, system.range)) ||
       (system.weight && !weightEqual(item.system?.weight, system.weight)) ||
       (system.price && !priceEqual(item.system?.price, system.price)) ||
       !reloadActivitiesEqual(item, targetReload) ||
       attackActivityMissing(item, targetReload) ||
-      (patch.flags && !rmeFlagEqual(item, patch.flags));
+      (patch.flags && !rmeFlagEqual(item, patch.flags)) ||
+      // Curated description / unidentified / icon migration. Each of these is
+      // only ever present on the patch when the current value is still
+      // module-owned (blank / legacy `<pre>` / placeholder icon), so their
+      // presence alone is the difference; after the first write the patch omits
+      // them and the item compares equal.
+      patch.img !== undefined ||
+      patch.system.description !== undefined ||
+      patch.system.unidentified !== undefined;
 
     if (differs) updates.push(patch);
   }

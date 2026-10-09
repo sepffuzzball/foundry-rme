@@ -65,6 +65,28 @@ jobs:
             assert.ok(!listing.includes('package/module.json'), 'no package/ prefix');
             assert.ok(listing.includes('data/catalog.json'), 'data/catalog.json must be archived');
 
+            // The bundled icon set and its attribution must be archived with the
+            // release (offline, not hotlinked), and the archive's icon count must
+            // match the icon map's referenced set.
+            assert.ok(listing.includes('ICON_ATTRIBUTION.md'), 'ICON_ATTRIBUTION.md must be archived');
+            assert.ok(listing.includes('data/icon-map.json'), 'data/icon-map.json must be archived');
+            const iconAssets = listing
+              .filter((l) => l.startsWith('assets/icons/') && l.endsWith('.svg'))
+              .map((l) => l.split('/').pop());
+            assert.ok(iconAssets.length > 0, 'at least one bundled icon must be archived');
+            const iconMapText = execFileSync('unzip', ['-p', zip, 'data/icon-map.json'], { encoding: 'utf8' });
+            const referencedIcons = new Set(
+              Object.values(JSON.parse(iconMapText)).map((p) => p.split('/').pop())
+            );
+            assert.equal(
+              iconAssets.length,
+              referencedIcons.size,
+              'archived icon count must match the icon map'
+            );
+            for (const icon of referencedIcons) {
+              assert.ok(iconAssets.includes(icon), `${icon} must be archived`);
+            }
+
             // The four precompiled compendium packs must be archived with their
             // LevelDB records (CURRENT marker and .ldb data files).
             for (const pack of ['weapons', 'armor', 'shields', 'ammunition']) {

@@ -75,7 +75,7 @@ export async function renderRmeItemDetails(app, element, catalog) {
   panel.className = 'rme-item-panel';
   panel.dataset.rmeItemPanel = '';
   panel.innerHTML = `<header class="rme-item-heading"><div><p class="rme-item-eyebrow">RME Equipment</p><h2>${escapeHtml(entry.name)}</h2><p>${escapeHtml(entry.group)}${entry.kind ? ` / ${escapeHtml(entry.kind)}` : ''}</p></div><span class="rme-item-tier" data-rme-tier>${escapeHtml(label(preview))}</span></header><p class="rme-item-equipped">${item.system?.equipped ? 'Equipped' : 'Not equipped'} <span>RME properties are available while equipped.</span></p>${dropdown}${ammoMarkup()}<div class="rme-item-profiles">${LEVELS.map((level) => profileMarkup(entry, level, level === preview)).join('')}</div><p class="rme-muted">RME properties are reference information; they do not provide tactical automation. Native dnd5e properties below are synchronized by the RME profile.</p>${showAmmo ? '<p class="rme-muted">RME-managed; native dnd5e ammo consumption is not used. Turn costs are player enforced.</p>' : ''}<div class="rme-item-error" data-rme-error role="alert" hidden></div>`;
-  details.append(panel);
+  details.prepend(panel);
 
   const showPreview = (level) => {
     preview = levelOf(level);

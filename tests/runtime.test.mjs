@@ -114,6 +114,15 @@ test('training dialog is source-derived and exposes source gaps and choice contr
   assert.match(source, /await dlg\.render\(true\);[\s\S]*?addEventListener\('input'/);
 });
 
+test('training dialog uses a scrollable viewport-bounded section and responsive dimensions', async () => {
+  const source = await readFile(new URL('../src/main.mjs', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../styles/rme.css', import.meta.url), 'utf8');
+  assert.match(source, /<section class="rme-dialog rme-training">/);
+  assert.match(source, /position:\{width:Math\.min\(960,window\.innerWidth-32\),height:Math\.min\(800,window\.innerHeight-32\)\}/);
+  assert.match(css, /\.rme-training\s*\{[^}]*max-height:\s*min\(70vh,\s*calc\(100dvh\s*-\s*11rem\)\)[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.rme-training\s*\.rme-list\s*\{\s*max-height:\s*none;\s*overflow:\s*visible/);
+});
+
 test('training flag replacement removes old nested keys when clearing state', async () => {
   const calls = [];
   const actor = { unsetFlag: async (...args) => calls.push(['unset', ...args]), setFlag: async (...args) => calls.push(['set', ...args]) };

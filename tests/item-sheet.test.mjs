@@ -68,6 +68,7 @@ class MockDetails {
   panels = [];
   querySelector(selector) { return selector === '[data-rme-item-panel]' ? this.panels[0] || null : null; }
   append(panel) { this.panels.push(panel); }
+  prepend(panel) { this.panels.unshift(panel); }
 }
 function fixture(item) {
   const details = new MockDetails();
@@ -215,6 +216,7 @@ test('renders escaped source and all three bolt rifle profiles once', async () =
   const entry = { ...rifle, expertPerk: '<script>alert("x")</script>' };
   const f = fixture({ flags: { 'foundry-rme': { catalogId: entry.id } }, system: {} });
   assert.equal(await renderRmeItemDetails(f.app, f.element, { equipment: [entry] }), true);
+  assert.equal(f.details.panels[0], f.panel, 'RME Equipment is first in the native Details tab');
   assert.match(f.panel.innerHTML, /RME Equipment/);
   assert.match(f.panel.innerHTML, /Awkward/);
   assert.match(f.panel.innerHTML, /&lt;script&gt;/, 'script characters are escaped in markup');

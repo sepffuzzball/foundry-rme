@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 
 import { extractPack } from '@foundryvtt/foundryvtt-cli';
 import { buildPacks } from '../scripts/build-packs.mjs';
+import { ICON_MAP } from '../src/icon-map.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -98,14 +99,24 @@ function assertValidItemSchema(doc, packName) {
   );
 
   assert.ok(doc.system && typeof doc.system === 'object', `${packName} item must have system`);
+  // Curated description / unidentified / icon are module-owned on every item.
+  const flags = doc.flags?.['foundry-rme'];
+  const sourceId = flags?.catalogId || flags?.ammoId;
+  assert.ok(sourceId, `${packName} item must carry a catalog/ammo id`);
+  assert.ok(ICON_MAP[sourceId], `${packName} item source id ${sourceId} must have a curated icon`);
+  assert.equal(doc.img, ICON_MAP[sourceId], `${packName} item must use the curated icon`);
+  assert.equal(typeof doc.system.description?.value, 'string', `${packName} item must have a description value`);
+  assert.ok(doc.system.description.value.length > 0, `${packName} description must be non-empty`);
+  assert.equal(typeof doc.system.description?.chat, 'string', `${packName} item must have a chat snippet`);
   assert.ok(
-    doc.system.description?.value?.startsWith('<pre>'),
-    `${packName} item description must be wrapped in <pre>`
+    doc.system.unidentified && typeof doc.system.unidentified === 'object',
+    `${packName} item must have an unidentified block`
   );
-  assert.ok(
-    doc.system.description?.value?.endsWith('</pre>'),
-    `${packName} item description must be wrapped in <pre>`
-  );
+  assert.equal(typeof doc.system.unidentified?.name, 'string', `${packName} item must have an unidentified name`);
+  assert.ok(doc.system.unidentified.name.length > 0, `${packName} unidentified name must be non-empty`);
+  assert.equal(typeof doc.system.unidentified?.description, 'string', `${packName} item must have an unidentified description`);
+  assert.ok(doc.system.unidentified.description.length > 0, `${packName} unidentified description must be non-empty`);
+
   assert.equal(typeof doc.system.identifier, 'string', `${packName} item must have system.identifier`);
   assert.ok(doc.system.identifier.length > 0, `${packName} system.identifier must be non-empty`);
   assert.equal(
@@ -149,14 +160,18 @@ function assertValidAmmoSchema(doc, entry) {
   );
   assert.equal(doc.system.price.denomination, 'gp', 'ammunition price must be in gp');
 
-  assert.ok(
-    doc.system.description?.value?.startsWith('<pre>'),
-    'ammunition description must be wrapped in <pre>'
+  // The curated icon and the identified / chat / unidentified description block.
+  assert.equal(doc.img, ICON_MAP[entry.id], 'ammunition must use the curated icon');
+  assert.equal(typeof doc.system.description?.value, 'string', 'ammunition must have a description value');
+  assert.ok(doc.system.description.value.length > 0, 'ammunition description must be non-empty');
+  assert.equal(typeof doc.system.description?.chat, 'string', 'ammunition must have a chat snippet');
+  assert.equal(
+    doc.system.unidentified?.name,
+    'Unidentified Ammunition',
+    'ammunition unidentified name must be generic'
   );
-  assert.ok(
-    doc.system.description?.value?.endsWith('</pre>'),
-    'ammunition description must be wrapped in <pre>'
-  );
+  assert.equal(typeof doc.system.unidentified?.description, 'string', 'ammunition must have an unidentified description');
+  assert.ok(doc.system.unidentified.description.length > 0, 'ammunition unidentified description must be non-empty');
 
   assert.equal(flags.ammoId, entry.id, 'ammunition flags must preserve the ammo id');
   assert.equal(flags.family, entry.family, 'ammunition flags must preserve the family');

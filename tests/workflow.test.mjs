@@ -115,6 +115,38 @@ test('workflow verifies the archive root, catalog, and compendium packs via unzi
   );
 });
 
+test('workflow verifies the bundled icons, attribution, and icon count via unzip', () => {
+  const text = workflowText();
+  assert.ok(
+    text.includes("listing.includes('ICON_ATTRIBUTION.md')"),
+    'must assert ICON_ATTRIBUTION.md is archived'
+  );
+  assert.ok(
+    text.includes("listing.includes('data/icon-map.json')"),
+    'must assert data/icon-map.json is archived'
+  );
+  assert.ok(
+    text.includes("l.startsWith('assets/icons/') && l.endsWith('.svg')"),
+    'must list the archived icons under assets/icons/'
+  );
+  assert.ok(
+    text.includes('iconAssets.length > 0'),
+    'must require at least one bundled icon'
+  );
+  assert.ok(
+    text.includes('referencedIcons.size'),
+    'must compare the archived icon count to the icon map'
+  );
+  assert.ok(
+    text.includes('archived icon count must match the icon map'),
+    'must fail on an icon count mismatch'
+  );
+  assert.ok(
+    text.includes('unzip'),
+    'must invoke unzip to inspect the archive'
+  );
+});
+
 test('workflow verifies the staged manifest URLs, tag, and version', () => {
   const text = workflowText();
   assert.ok(text.includes('dist/release.json'), 'must read dist/release.json');

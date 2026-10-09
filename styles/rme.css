@@ -1,5 +1,8 @@
 .rme-dialog { --rme-accent: #9c5639; }
 .rme-dialog .window-content { padding: 1rem; }
+.rme-training { box-sizing:border-box; min-height:0; max-height:min(70vh, calc(100dvh - 11rem)); overflow-y:auto; overscroll-behavior:contain; }
+.rme-training, .rme-training * { box-sizing:border-box; }
+.rme-training .rme-list { max-height:none; overflow:visible; }
 .rme-toolbar { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin-bottom:.8rem; }
 .rme-toolbar input, .rme-toolbar select { min-width:12rem; }
 .rme-toolbar button { min-height:2rem; }
@@ -48,4 +51,6 @@
 .rme-ammo h3 { margin:.1rem 0 .45rem; font-size:1rem; }
 .rme-ammo p { margin:.3rem 0; }
 .rme-ammo-warning { color:var(--color-level-warning,#8a5b00); font-weight:600; }
+.rme-magazine-badge { display:inline-block; margin-inline-start:.35rem; padding:.08rem .35rem; border:1px solid var(--color-border-light-2, #777); border-radius:999px; background:color-mix(in srgb, var(--color-text-light-0, #fff) 88%, transparent); color:var(--color-text-dark-primary, #222); font-size:.72em; font-weight:700; line-height:1.35; white-space:nowrap; vertical-align:middle; }
+[data-theme="dark"] .rme-magazine-badge { background:color-mix(in srgb, var(--color-text-dark-1, #222) 88%, transparent); color:var(--color-text-light-1, #eee); }
 @media(max-width:600px) { .rme-item-heading { display:block; } .rme-item-tier { margin:.4rem 0; } .rme-item-properties { columns:1; } }

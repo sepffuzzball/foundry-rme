@@ -77,6 +77,9 @@ function mergeItem(item, update) {
       ...update.flags[FLAGS_KEY],
     };
   }
+  if (update.img !== undefined) {
+    merged.img = update.img;
+  }
   return merged;
 }
 
@@ -276,6 +279,51 @@ test('syncActorRme: applies the effective state to actor items and is idempotent
   const second = await syncActorRme(actor, equipment);
   assert.deepEqual(second.updates, []);
   assert.equal(second.effective.items['axes/battle-axe'], 'proficient');
+});
+
+test('syncActorRme: preserves a user-edited versatile die across a coincidental expert upgrade', async () => {
+  const items = [
+    {
+      _id: 'ba-edit-1',
+      flags: { [FLAGS_KEY]: { catalogId: battleAxe.id } },
+      system: { proficient: 0 },
+    },
+  ];
+  const actor = makeActor({
+    items,
+    flags: { 'foundry-rme': { training: { groups: { Axes: 'proficient' } } } },
+  });
+
+  const first = await syncActorRme(actor, equipment);
+  assert.equal(first.updates.length, 1);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+
+  // The user changes the two-handed die before an expert upgrade; the expert
+  // tier's native die is also d12, but the user value must never be overwritten.
+  items[0].system.damage.versatile = { number: 1, denomination: 12, bonus: '', types: ['slashing'] };
+
+  // Advance the group training to expert for this axe.
+  actor.__state['foundry-rme'].training = { groups: { Axes: 'expert' } };
+  const second = await syncActorRme(actor, equipment);
+  assert.ok(second.updates.length >= 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+
+  // A further sync at the same expert tier writes nothing.
+  const third = await syncActorRme(actor, equipment);
+  assert.deepEqual(third.updates, []);
 });
 
 test('syncActorRme: leaves items without a known catalogId untouched', async () => {

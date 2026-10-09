@@ -15,6 +15,9 @@ import {
   RELOAD_FAST_ID,
 } from '../src/items.mjs';
 import { tierProperties } from '../src/rme-metadata.mjs';
+import { nativeProfile } from '../src/native-properties.mjs';
+import { ICON_MAP } from '../src/icon-map.mjs';
+import { equipmentDescriptions } from '../src/item-descriptions.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(
@@ -38,6 +41,7 @@ const boltActionRifle = entry('firearms/bolt-action-rifle');
 const breakActionRevolver = entry('firearms/break-action-revolver');
 const repeatingCrossbow = entry('crossbows/repeating-crossbow');
 const spinner = entry('crossbows/spinner');
+const heavyClub = entry('bludgeons/heavy-club');
 
 // Synthetic malformed-mode entries used to exercise the conservative parser.
 const twoMeleeWeapon = {
@@ -111,20 +115,56 @@ const rangedThenMelee = {
 };
 
 // The module-owned flag block an entry should carry at a resolved level. Used to
-// assert that makeItemData / itemProfilePatch write the expected flag metadata.
+// assert that makeItemData / itemProfilePatch write the expected flag metadata,
+// including the module-owned native property list and Versatile ownership flag.
 function expectedFlags(entryLike, level) {
   const normalized = level === 'basic' ? 'proficient' : level;
+  const native = nativeProfile(entryLike, normalized);
+  const data = makeItemData(entryLike, normalized);
   return {
     catalogId: entryLike.id,
     group: entryLike.group,
     activeTier: normalized,
     activeProperties: tierProperties(entryLike, normalized),
     expertPerk: entryLike.expertPerk || null,
+    nativeProperties: native.keys.slice().sort(),
+    nativeVersatileDamage: native.keys.includes('ver') && native.versatile !== null,
+    nativeVersatileSnapshot: data.flags[FLAGS_KEY].nativeVersatileSnapshot,
+    nativeVersatileManual: false,
   };
 }
 
+// The curated icon / description / unidentified fields the module owns for an
+// entry. Used to assert the itemProfilePatch migration output on a blank item.
+function curatedFields(entryLike) {
+  const d = equipmentDescriptions(entryLike);
+  return {
+    img: ICON_MAP[entryLike.id],
+    description: { value: d.identifiedHtml, chat: d.chatHtml },
+    unidentified: { name: d.unidentifiedName, description: d.unidentifiedHtml },
+  };
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// The legacy `<pre>`-wrapped escaped verbatim description that the original
+// mapper wrote into system.description.value before curated descriptions.
+function legacyPre(entry) {
+  return `<pre>${escapeHtml(entry.description)}</pre>`;
+}
+
 function propsOf(entryLike, level) {
-  return tierProperties(entryLike, level).map((p) => p.key);
+  return [
+    ...tierProperties(entryLike, level).map((p) => p.key),
+    ...nativeProfile(entryLike, level).keys,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +189,18 @@ test('makeItemData: battle axe maps to the RME melee category with stats and fla
   });
   assert.equal(data.system.range, undefined);
   assert.equal(data.system.activities, undefined);
-  assert.ok(data.system.description.value.startsWith('<pre>'));
-  assert.ok(data.system.description.value.endsWith('</pre>'));
-  assert.ok(data.system.description.value.includes('##### Battle Axe'));
-  assert.ok(data.system.description.value.includes('_Slashing, 4 lbs, 10 gp_'));
+  // The curated description/unidentified/icon come from the catalog mapping.
+  assert.equal(data.img, ICON_MAP[battleAxe.id]);
+  const descriptions = equipmentDescriptions(battleAxe);
+  assert.equal(data.system.description.value, descriptions.identifiedHtml);
+  assert.equal(data.system.description.chat, descriptions.chatHtml);
+  assert.deepEqual(data.system.unidentified, {
+    name: descriptions.unidentifiedName,
+    description: descriptions.unidentifiedHtml,
+  });
+  assert.ok(data.system.description.value.startsWith('<p>'));
+  assert.ok(!data.system.description.value.includes('#####'));
+  assert.ok(!data.system.description.value.includes('_Slashing'));
 });
 
 test('makeItemData: battle axe default level is untrained (proficient 0)', () => {
@@ -298,15 +346,17 @@ test('makeItemData: natural weapons use the natural type, suppress activities, a
   assert.deepEqual(data.system.properties, propsOf(claw, 'proficient'));
 });
 
-test('makeItemData: escapes HTML in the description and wraps it in <pre>', () => {
+test('makeItemData: escapes HTML in the identified and chat description', () => {
   const data = makeItemData(xssWeapon, 'untrained');
   const value = data.system.description.value;
-  assert.ok(value.startsWith('<pre>'));
-  assert.ok(value.endsWith('</pre>'));
+  assert.ok(value.startsWith('<p>'));
   assert.ok(value.includes('&lt;b&gt;Bold&lt;/b&gt;'));
   assert.ok(value.includes('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;'));
   assert.ok(!value.includes('<script>'));
   assert.ok(!value.includes('<b>'));
+  // The chat snippet escapes the same HTML and is a short word-boundary snippet.
+  assert.ok(data.system.description.chat.includes('&lt;b&gt;Bold&lt;/b&gt;'));
+  assert.ok(data.system.description.chat.length <= 180);
 });
 
 // ---------------------------------------------------------------------------
@@ -441,8 +491,10 @@ test('makeItemData: a magazine weapon attack uses a valid 16-char module id', ()
 test('itemProfilePatch: weapon returns only module-owned fields', () => {
   const item = { _id: 'item-1', system: { proficient: 1 } };
   const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  const curated = curatedFields(battleAxe);
   assert.deepEqual(patch, {
     _id: 'item-1',
+    img: curated.img,
     system: {
       proficient: 1,
       type: { value: 'rmeAxes' },
@@ -451,7 +503,10 @@ test('itemProfilePatch: weapon returns only module-owned fields', () => {
       price: { value: 10, denomination: 'gp' },
       damage: {
         base: { number: 1, denomination: 8, bonus: '', types: ['slashing'] },
+        versatile: { number: 1, denomination: 10, bonus: '', types: ['slashing'] },
       },
+      description: curated.description,
+      unidentified: curated.unidentified,
     },
     flags: { [FLAGS_KEY]: expectedFlags(battleAxe, 'proficient') },
   });
@@ -460,8 +515,10 @@ test('itemProfilePatch: weapon returns only module-owned fields', () => {
 test('itemProfilePatch: ranged weapon includes range only for a sole ranged profile', () => {
   const item = { _id: 'item-2', system: { proficient: 0 } };
   const patch = itemProfilePatch(item, shortbow, 'proficient');
+  const curated = curatedFields(shortbow);
   assert.deepEqual(patch, {
     _id: 'item-2',
+    img: curated.img,
     system: {
       proficient: 1,
       type: { value: 'rmeBows' },
@@ -472,6 +529,8 @@ test('itemProfilePatch: ranged weapon includes range only for a sole ranged prof
         base: { number: 1, denomination: 6, bonus: '', types: ['piercing'] },
       },
       range: { value: 80, long: 320, units: 'ft' },
+      description: curated.description,
+      unidentified: curated.unidentified,
     },
     flags: { [FLAGS_KEY]: expectedFlags(shortbow, 'proficient') },
   });
@@ -480,13 +539,17 @@ test('itemProfilePatch: ranged weapon includes range only for a sole ranged prof
 test('itemProfilePatch: armor returns type, proficient, and repaired physical stats', () => {
   const item = { _id: 'item-3', system: { proficient: 1 } };
   const patch = itemProfilePatch(item, chainShirt, 'proficient');
+  const curated = curatedFields(chainShirt);
   assert.deepEqual(patch, {
     _id: 'item-3',
+    img: curated.img,
     system: {
       proficient: 1,
       type: { value: 'medium' },
       weight: { value: 10, units: 'lb' },
       price: { value: 50, denomination: 'gp' },
+      description: curated.description,
+      unidentified: curated.unidentified,
     },
     flags: { [FLAGS_KEY]: expectedFlags(chainShirt, 'proficient') },
   });
@@ -495,12 +558,16 @@ test('itemProfilePatch: armor returns type, proficient, and repaired physical st
 test('itemProfilePatch: a weapon without parseable damage syncs proficiency, type, and properties', () => {
   const item = { _id: 'item-4', system: { proficient: 0 } };
   const patch = itemProfilePatch(item, claw, 'proficient');
+  const curated = curatedFields(claw);
   assert.deepEqual(patch, {
     _id: 'item-4',
+    img: curated.img,
     system: {
       proficient: 1,
       type: { value: 'natural' },
       properties: propsOf(claw, 'proficient'),
+      description: curated.description,
+      unidentified: curated.unidentified,
     },
     flags: { [FLAGS_KEY]: expectedFlags(claw, 'proficient') },
   });
@@ -785,6 +852,9 @@ function mergeItem(item, update) {
       ...update.flags[FLAGS_KEY],
     };
   }
+  if (update.img !== undefined) {
+    merged.img = update.img;
+  }
   return merged;
 }
 
@@ -808,11 +878,16 @@ function makeActor(items) {
 
 // Build the exact module-owned target state for an entry at a level, using the
 // same mapper, so idempotency assertions can construct a fully-matching item.
+// The curated description / unidentified / icon fields are included because
+// syncActorItems now compares them (conditionally), so a fully-synced item must
+// carry them to be idempotent.
 function fullySyncedState(entryLike, level) {
   const data = makeItemData(entryLike, level);
-  const system = { ...data.system };
-  delete system.description;
-  return { flags: { [FLAGS_KEY]: data.flags[FLAGS_KEY] }, system };
+  return {
+    img: data.img,
+    flags: { [FLAGS_KEY]: data.flags[FLAGS_KEY] },
+    system: { ...data.system },
+  };
 }
 
 // Build a live-like dnd5e 6.x activity collection: a Map whose entries are the
@@ -1045,11 +1120,15 @@ test('syncActorItems: a legacy natural weapon with matching system fields gains 
   assert.deepEqual(flags.activeProperties, tierProperties(claw, level));
   assert.equal(flags.expertPerk, claw.expertPerk);
   assert.equal(flags.catalogId, 'natural-weapons/claw');
-  // Only the flag metadata was added; no system field was rewritten.
+  // Only module-owned flag metadata plus the curated description / unidentified
+  // fields were added; the native system fields were never rewritten.
+  const curated = curatedFields(claw);
   assert.deepEqual(items[0].system, {
     proficient: 1,
     type: { value: 'natural' },
     properties: clawProps,
+    description: curated.description,
+    unidentified: curated.unidentified,
   });
 
   const second = await syncActorItems(actor, catalog.equipment, training);
@@ -1182,7 +1261,7 @@ test('syncActorItems: moving off an expert tier removes a stale fast reload idem
 
 test('syncActorItems: a fully synced magazine weapon stays idempotent', async () => {
   const rifle = fullySyncedState(boltActionRifle, 'expert');
-  const items = [{ _id: 'id1', flags: rifle.flags, system: rifle.system }];
+  const items = [{ _id: 'id1', img: rifle.img, flags: rifle.flags, system: rifle.system }];
   const actor = makeActor(items);
   const training = { items: { 'firearms/bolt-action-rifle': 'expert' } };
   const updates = await syncActorItems(actor, catalog.equipment, training);
@@ -1310,6 +1389,7 @@ test('syncActorItems: a magazine weapon with matching reload activities in a liv
   const items = [
     {
       _id: 'map-synced-1',
+      img: rifle.img,
       flags: rifle.flags,
       system: {
         ...rifle.system,
@@ -1352,6 +1432,923 @@ test('syncActorItems: detects a user attack in a live Map and never adds the mod
   assert.equal(activities.get(RELOAD_FAST_ID), undefined);
 
   // Idempotent: the user attack is never replaced and nothing writes again.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+// ---------------------------------------------------------------------------
+// Curated description / unidentified / icon
+// ---------------------------------------------------------------------------
+
+test('makeItemData: rifle identified text is prose-only with no heading/stat/tier/perk', () => {
+  const d = equipmentDescriptions(boltActionRifle);
+  const data = makeItemData(boltActionRifle, 'proficient');
+  assert.equal(data.img, ICON_MAP[boltActionRifle.id]);
+  assert.equal(data.system.description.value, d.identifiedHtml);
+  assert.equal(data.system.description.value.includes('#####'), false);
+  assert.equal(data.system.description.value.includes('_Piercing'), false);
+  assert.equal(data.system.description.value.includes('12 lbs'), false);
+  assert.equal(data.system.description.value.includes('1000 gp'), false);
+  assert.equal(data.system.description.value.includes('Untrained'), false);
+  assert.equal(data.system.description.value.includes('Basic'), false);
+  assert.equal(data.system.description.value.includes('Expert Perk'), false);
+});
+
+test('makeItemData: rifle chat is a short word-boundary snippet with no stats or perk', () => {
+  const data = makeItemData(boltActionRifle, 'proficient');
+  const chat = data.system.description.chat;
+  assert.ok(chat.length > 0);
+  assert.ok(chat.length <= 180);
+  assert.equal(chat.includes('12 lbs'), false);
+  assert.equal(chat.includes('1000 gp'), false);
+  assert.equal(chat.includes('#####'), false);
+  assert.equal(chat.includes('Expert Perk'), false);
+});
+
+test('makeItemData: rifle unidentified is a generic category that never names the item', () => {
+  const data = makeItemData(boltActionRifle, 'proficient');
+  assert.equal(data.system.unidentified.name, 'Unidentified Firearm');
+  assert.ok(data.system.unidentified.description.length > 0);
+  assert.equal(data.system.unidentified.description.includes('Bolt-Action Rifle'), false);
+  assert.equal(data.system.unidentified.description.includes('1000 gp'), false);
+});
+
+test('makeItemData: natural and armor entries carry the curated icon and descriptions', () => {
+  for (const e of [claw, chainShirt]) {
+    const data = makeItemData(e, 'proficient');
+    assert.equal(data.img, ICON_MAP[e.id], `${e.id} must use the curated icon`);
+    const d = equipmentDescriptions(e);
+    assert.equal(data.system.description.value, d.identifiedHtml, `${e.id} identified`);
+    assert.equal(data.system.description.chat, d.chatHtml, `${e.id} chat`);
+    assert.deepEqual(data.system.unidentified, {
+      name: d.unidentifiedName,
+      description: d.unidentifiedHtml,
+    }, `${e.id} unidentified`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// itemProfilePatch - legacy migration / custom preservation
+// ---------------------------------------------------------------------------
+
+test('itemProfilePatch: migrates a legacy <pre> description and a placeholder icon', () => {
+  const item = {
+    _id: 'legacy1',
+    img: 'icons/svg/item-bag.svg',
+    system: { proficient: 1, description: { value: legacyPre(battleAxe) } },
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  const curated = curatedFields(battleAxe);
+  assert.equal(patch.img, curated.img);
+  assert.equal(patch.system.description.value, curated.description.value);
+  assert.equal(patch.system.description.chat, curated.description.chat);
+  assert.deepEqual(patch.system.unidentified, curated.unidentified);
+});
+
+test('itemProfilePatch: migrates a blank description but preserves a user icon', () => {
+  const item = {
+    _id: 'blank1',
+    img: 'modules/my-packs/icons/custom.svg',
+    system: { proficient: 1, description: { value: '' } },
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  const curated = curatedFields(battleAxe);
+  // Blank description.value is migrated; the custom icon is preserved.
+  assert.equal(patch.img, undefined);
+  assert.equal(patch.system.description.value, curated.description.value);
+  assert.equal(patch.system.description.chat, curated.description.chat);
+  assert.deepEqual(patch.system.unidentified, curated.unidentified);
+});
+
+test('itemProfilePatch: preserves user-authored prose, chat, unidentified, and icon', () => {
+  const custom = {
+    _id: 'custom2',
+    img: 'modules/my-packs/icons/custom.svg',
+    system: {
+      proficient: 1,
+      description: { value: '<p>User flavor</p>', chat: 'User chat' },
+      unidentified: { name: 'Mystery', description: 'User note' },
+    },
+  };
+  const patch = itemProfilePatch(custom, battleAxe, 'proficient');
+  assert.equal(patch.img, undefined);
+  assert.equal(patch.system.description, undefined);
+  assert.equal(patch.system.unidentified, undefined);
+});
+
+test('itemProfilePatch: fills a blank chat but never touches a custom description.value', () => {
+  const item = {
+    _id: 'chat1',
+    img: 'modules/my-packs/icons/custom.svg',
+    system: { proficient: 1, description: { value: '<p>User flavor</p>' } },
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  const curated = curatedFields(battleAxe);
+  assert.equal(patch.img, undefined);
+  // The custom value is preserved and only the missing chat is filled.
+  assert.equal(patch.system.description.value, '<p>User flavor</p>');
+  assert.equal(patch.system.description.chat, curated.description.chat);
+});
+
+test('itemProfilePatch: migrates an armor legacy description', () => {
+  const item = {
+    _id: 'armor-legacy',
+    system: {
+      proficient: 1,
+      type: { value: 'medium' },
+      description: { value: legacyPre(chainShirt) },
+    },
+  };
+  const patch = itemProfilePatch(item, chainShirt, 'proficient');
+  const curated = curatedFields(chainShirt);
+  assert.equal(patch.img, curated.img);
+  assert.equal(patch.system.description.value, curated.description.value);
+  assert.equal(patch.system.unidentified.name, curated.unidentified.name);
+});
+
+// ---------------------------------------------------------------------------
+// syncActorItems - legacy migration idempotency
+// ---------------------------------------------------------------------------
+
+test('syncActorItems: migrates a legacy description/icon once, then stays idempotent', async () => {
+  const items = [
+    {
+      _id: 'legacy-sync-1',
+      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
+      img: 'icons/svg/sword.svg',
+      system: { proficient: 1, description: { value: legacyPre(battleAxe) } },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.equal(first[0].img, ICON_MAP['axes/battle-axe']);
+  assert.equal(
+    items[0].system.description.value,
+    equipmentDescriptions(battleAxe).identifiedHtml
+  );
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: preserves user-edited body, chat, and icon across syncs', async () => {
+  const body = '<p>My custom prose</p>';
+  const chat = 'My custom chat';
+  const icon = 'modules/my-packs/icons/custom.svg';
+  const items = [
+    {
+      _id: 'preserve-1',
+      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
+      img: icon,
+      system: {
+        proficient: 0,
+        description: { value: body, chat },
+        unidentified: { name: 'Mystery', description: 'User note' },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const merged = items[0];
+  assert.equal(merged.img, icon);
+  assert.equal(merged.system.description.value, body);
+  assert.equal(merged.system.description.chat, chat);
+  assert.deepEqual(merged.system.unidentified, { name: 'Mystery', description: 'User note' });
+  // The patch never rewrote the user's curated fields.
+  assert.equal(first[0].img, undefined);
+  assert.equal(first[0].system.description, undefined);
+  assert.equal(first[0].system.unidentified, undefined);
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+// ---------------------------------------------------------------------------
+// Native dnd5e weapon-property promotion (two / fin / rch / ver)
+// ---------------------------------------------------------------------------
+
+test('makeItemData: rifle promotes only the `two` native key and no unsupported keys at any tier', () => {
+  const neverMapped = ['amm', 'fir', 'hvy', 'lgt', 'lod', 'thr'];
+  for (const level of ['untrained', 'proficient', 'expert']) {
+    const data = makeItemData(boltActionRifle, level);
+    assert.ok(data.system.properties.includes('two'), `${level}: expected native two`);
+    assert.deepEqual(
+      data.flags[FLAGS_KEY].nativeProperties,
+      ['two'],
+      `${level}: nativeProperties must track only the module-owned key`
+    );
+    assert.equal(data.flags[FLAGS_KEY].nativeVersatileDamage, false);
+    assert.equal(data.system.damage.versatile, undefined);
+    for (const key of neverMapped) {
+      assert.ok(
+        !data.system.properties.includes(key),
+        `${level}: unsupported native key ${key} promoted`
+      );
+    }
+  }
+});
+
+test('makeItemData: battle axe maps two at untrained and the parsed versatile die per tier', () => {
+  const untrained = makeItemData(battleAxe, 'untrained');
+  assert.ok(untrained.system.properties.includes('two'));
+  assert.deepEqual(untrained.flags[FLAGS_KEY].nativeProperties, ['two']);
+  assert.deepEqual(untrained.system.damage.base, {
+    number: 1,
+    denomination: 8,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(untrained.system.damage.versatile, undefined);
+
+  const basic = makeItemData(battleAxe, 'basic');
+  assert.ok(basic.system.properties.includes('ver'));
+  assert.ok(!basic.system.properties.includes('two'));
+  assert.deepEqual(basic.flags[FLAGS_KEY].nativeProperties, ['ver']);
+  assert.equal(basic.flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(basic.system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+
+  const expert = makeItemData(battleAxe, 'expert');
+  assert.deepEqual(expert.flags[FLAGS_KEY].nativeProperties, ['ver']);
+  assert.deepEqual(expert.system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+});
+
+test('makeItemData: heavy club maps the 2d4 versatile die at proficient', () => {
+  const data = makeItemData(heavyClub, 'proficient');
+  assert.ok(data.system.properties.includes('ver'));
+  assert.deepEqual(data.flags[FLAGS_KEY].nativeProperties, ['ver']);
+  assert.equal(data.flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(data.system.damage.versatile, {
+    number: 2,
+    denomination: 4,
+    bonus: '',
+    types: ['bludgeoning'],
+  });
+  // Untrained is Two-Handed with no Versatile die.
+  const untrained = makeItemData(heavyClub, 'untrained');
+  assert.ok(untrained.system.properties.includes('two'));
+  assert.deepEqual(untrained.flags[FLAGS_KEY].nativeProperties, ['two']);
+  assert.equal(untrained.system.damage.versatile, undefined);
+});
+
+test('makeItemData: break-action revolver maps the parenthesized versatile die per tier', () => {
+  const basic = makeItemData(breakActionRevolver, 'basic');
+  assert.deepEqual(basic.system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['piercing'],
+  });
+  const expert = makeItemData(breakActionRevolver, 'expert');
+  assert.deepEqual(expert.system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['piercing'],
+  });
+  const untrained = makeItemData(breakActionRevolver, 'untrained');
+  assert.ok(untrained.system.properties.includes('two'));
+  assert.deepEqual(untrained.flags[FLAGS_KEY].nativeProperties, ['two']);
+  assert.equal(untrained.system.damage.versatile, undefined);
+});
+
+test('itemProfilePatch: removes a module-owned `two` when the tier drops Two-Handed', () => {
+  const untrained = makeItemData(battleAxe, 'untrained');
+  const item = {
+    _id: 'dh1',
+    flags: { [FLAGS_KEY]: untrained.flags[FLAGS_KEY] },
+    system: untrained.system,
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  assert.ok(!patch.system.properties.includes('two'));
+  assert.ok(patch.system.properties.includes('ver'));
+  assert.deepEqual(patch.flags[FLAGS_KEY].nativeProperties, ['ver']);
+  assert.deepEqual(patch.system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+});
+
+test('itemProfilePatch: never clobbers user-added native properties on an unrelated tier', () => {
+  const item = {
+    _id: 'np1',
+    system: { proficient: 1, properties: ['fin', 'rch', 'fir', 'two'] },
+  };
+  const patch = itemProfilePatch(item, boltActionRifle, 'proficient');
+  const props = patch.system.properties;
+  for (const key of ['fin', 'rch', 'fir']) {
+    assert.ok(props.includes(key), `user native property ${key} was clobbered`);
+  }
+  // The tier grants `two`; a user value is preserved once, never duplicated.
+  assert.equal(props.filter((k) => k === 'two').length, 1);
+  // A user key already present is never claimed by the module.
+  assert.ok(!patch.flags[FLAGS_KEY].nativeProperties.includes('two'));
+});
+
+test('itemProfilePatch: preserves a user-owned `two` when the tier drops Two-Handed', () => {
+  const item = {
+    _id: 'ut2',
+    flags: { [FLAGS_KEY]: { catalogId: battleAxe.id } },
+    system: { proficient: 1, properties: ['two'] },
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  assert.ok(patch.system.properties.includes('two'));
+  assert.ok(patch.system.properties.includes('ver'));
+  // The user-owned two is not claimed; only the newly granted ver is tracked.
+  assert.deepEqual(patch.flags[FLAGS_KEY].nativeProperties, ['ver']);
+});
+
+test('itemProfilePatch: preserves a nonempty user-owned versatile damage value', () => {
+  const userVersatile = {
+    number: 2,
+    denomination: 6,
+    bonus: '3',
+    types: ['slashing', 'radiant'],
+  };
+  const item = {
+    _id: 'uv2',
+    flags: { [FLAGS_KEY]: { catalogId: battleAxe.id } },
+    system: {
+      proficient: 1,
+      damage: {
+        base: { number: 1, denomination: 8, bonus: '2', types: ['slashing'] },
+        versatile: userVersatile,
+      },
+    },
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  // The user versatile is never overwritten; the module does not claim it.
+  assert.equal(patch.system.damage.versatile, undefined);
+  assert.deepEqual(patch.system.damage.base, {
+    number: 1,
+    denomination: 8,
+    bonus: '2',
+    types: ['slashing'],
+  });
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+});
+
+test('itemProfilePatch: clears a module-owned versatile when the tier drops Versatile', () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'cv1',
+    flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+    system: proficient.system,
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'untrained');
+  assert.ok(!patch.system.properties.includes('ver'));
+  assert.ok(patch.system.properties.includes('two'));
+  assert.deepEqual(patch.system.damage.versatile, {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.deepEqual(patch.flags[FLAGS_KEY].nativeProperties, ['two']);
+});
+
+// ---------------------------------------------------------------------------
+// syncActorItems - native property preservation / idempotence
+// ---------------------------------------------------------------------------
+
+test('syncActorItems: preserves a user-owned `two` when the tier drops it, idempotently', async () => {
+  const items = [
+    {
+      _id: 'ut1',
+      flags: { [FLAGS_KEY]: { catalogId: battleAxe.id } },
+      system: { proficient: 1, properties: ['two'] },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.ok(items[0].system.properties.includes('two'));
+  assert.ok(items[0].system.properties.includes('ver'));
+  assert.ok(!items[0].flags[FLAGS_KEY].nativeProperties.includes('two'));
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: preserves a user-owned versatile damage value, idempotently', async () => {
+  const userVersatile = { number: 2, denomination: 6, bonus: '3', types: ['slashing', 'radiant'] };
+  const items = [
+    {
+      _id: 'uv1',
+      flags: { [FLAGS_KEY]: { catalogId: battleAxe.id } },
+      system: {
+        proficient: 1,
+        properties: ['rme-one-handed', 'rme-melee', 'rme-versatile', 'rme-trip', 'ver'],
+        damage: {
+          base: { number: 1, denomination: 8, bonus: '2', types: ['slashing'] },
+          versatile: userVersatile,
+        },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, userVersatile);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+// ---------------------------------------------------------------------------
+// syncActorItems - module-owned Versatile snapshot (user-edit protection)
+// ---------------------------------------------------------------------------
+
+test('itemProfilePatch: preserves a user-edited versatile die even when it coincides with the new tier die', () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'uvd1',
+    flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+    system: proficient.system,
+  };
+  // The user changes the two-handed die on the basic-tier axe from d10 to d12.
+  item.system.damage.versatile = { number: 1, denomination: 12, bonus: '', types: ['slashing'] };
+  // Moving to expert would grant a die that is also d12, but the user already set it.
+  const patch = itemProfilePatch(item, battleAxe, 'expert');
+  assert.equal(patch.system.damage.versatile, undefined);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+});
+
+test('itemProfilePatch: preserves a user-edited versatile bonus and damage types', () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'uvbt',
+    flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+    system: proficient.system,
+  };
+  // The user edits only the bonus and types, leaving the module-written dice as-is.
+  item.system.damage.versatile = {
+    number: 1,
+    denomination: 10,
+    bonus: '2',
+    types: ['slashing', 'radiant'],
+  };
+  const patch = itemProfilePatch(item, battleAxe, 'expert');
+  assert.equal(patch.system.damage.versatile, undefined);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+});
+
+test('itemProfilePatch: a legacy owned flag with no snapshot leaves the uncertain value untouched and relinquishes', () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'legacy-v1',
+    flags: {
+      [FLAGS_KEY]: {
+        catalogId: battleAxe.id,
+        nativeProperties: ['ver'],
+        nativeVersatileDamage: true,
+        // No nativeVersatileSnapshot: this flag predates the snapshot.
+      },
+    },
+    system: proficient.system,
+  };
+  // The current value could be module-written or user-edited; without a snapshot
+  // it is uncertain, so it is preserved and ownership relinquished.
+  const patch = itemProfilePatch(item, battleAxe, 'expert');
+  assert.equal(patch.system.damage.versatile, undefined);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+});
+
+test('syncActorItems: preserves a user-edited versatile die across a coincidental tier upgrade, idempotently', async () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'uva1',
+    flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+    system: proficient.system,
+  };
+  // The user edits the versatile die to d12 before the expert upgrade. The expert
+  // tier's die is also d12, but the user value must never be overwritten.
+  item.system.damage.versatile = { number: 1, denomination: 12, bonus: '', types: ['slashing'] };
+  const items = [item];
+  const actor = makeActor(items);
+  const training = { items: { 'axes/battle-axe': 'expert' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a downgrade never clears a user-edited versatile die that is still user-owned', async () => {
+  const expert = makeItemData(battleAxe, 'expert');
+  const item = {
+    _id: 'dwe1',
+    flags: { [FLAGS_KEY]: expert.flags[FLAGS_KEY] },
+    system: expert.system,
+  };
+  // The module acknowledged the user edit (relinquished) at expert, then the
+  // user downgrades to proficient.
+  item.system.damage.versatile = { number: 1, denomination: 12, bonus: '', types: ['slashing'] };
+  item.flags[FLAGS_KEY].nativeVersatileDamage = false;
+  item.flags[FLAGS_KEY].nativeVersatileSnapshot = null;
+  const items = [item];
+  const actor = makeActor(items);
+  const training = { items: { 'axes/battle-axe': 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a tier that drops Versatile never clears a user-edited versatile die', async () => {
+  const expert = makeItemData(battleAxe, 'expert');
+  const item = {
+    _id: 'uvdrop',
+    flags: { [FLAGS_KEY]: expert.flags[FLAGS_KEY] },
+    system: expert.system,
+  };
+  // The user edit has been acknowledged (relinquished) and the tier drops the
+  // Versatile property entirely (untrained is Two-Handed).
+  item.system.damage.versatile = { number: 1, denomination: 12, bonus: '', types: ['slashing'] };
+  item.flags[FLAGS_KEY].nativeVersatileDamage = false;
+  item.flags[FLAGS_KEY].nativeVersatileSnapshot = null;
+  const items = [item];
+  const actor = makeActor(items);
+  const training = { items: { 'axes/battle-axe': 'untrained' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: an unchanged module-owned versatile die upgrades and downgrades with the tier', async () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const items = [
+    {
+      _id: 'uvud1',
+      flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+      system: proficient.system,
+    },
+  ];
+  const actor = makeActor(items);
+
+  // Upgrade to expert: the unchanged owned value is updated to the expert die.
+  const up = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'expert' },
+  });
+  assert.equal(up.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, {
+    number: 1,
+    denomination: 12,
+    bonus: '',
+    types: ['slashing'],
+  });
+
+  // Downgrade to proficient: the unchanged owned value is updated back down.
+  const down = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'proficient' },
+  });
+  assert.equal(down.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+
+  // Downgrade to a tier without Versatile: only a still-module-owned value clears.
+  const drop = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'untrained' },
+  });
+  assert.equal(drop.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+});
+
+// ---
+// syncActorItems - module-owned Versatile: a user-cleared die is never restored
+// ---
+
+test('itemProfilePatch: preserves a user-cleared module-owned versatile die and relinquishes ownership', () => {
+  const proficient = makeItemData(battleAxe, 'proficient');
+  const item = {
+    _id: 'clear-ver-patch',
+    flags: { [FLAGS_KEY]: proficient.flags[FLAGS_KEY] },
+    system: proficient.system,
+  };
+  // The user clears the module-owned d10 versatile die to a zero die.
+  item.system.damage.versatile = { number: 0, denomination: 0, bonus: '', types: ['slashing'] };
+  const patch = itemProfilePatch(item, battleAxe, 'proficient');
+  // The cleared zero is never rewritten back to the module die; ownership is
+  // relinquished and the snapshot dropped.
+  assert.equal(patch.system.damage.versatile, undefined);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(patch.flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+});
+
+test('syncActorItems: a user clearing a module-owned versatile die to zero keeps it zero, relinquishes, and never restores it', async () => {
+  const basic = fullySyncedState(battleAxe, 'proficient');
+  const items = [
+    {
+      _id: 'clear-zero-1',
+      img: basic.img,
+      flags: basic.flags,
+      system: basic.system,
+    },
+  ];
+  // The user clears the module-owned d10 versatile die to a zero die.
+  items[0].system.damage.versatile = { number: 0, denomination: 0, bonus: '', types: ['slashing'] };
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  // The cleared zero is preserved, never restored to the d10 die.
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: ['slashing'],
+  });
+  // Ownership is relinquished: no damage flag, no snapshot, and the manual
+  // marker is set so the user-cleared zero is never reclaimed later.
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileManual, true);
+
+  // A repeated sync must not rewrite the zero back to the module die.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a user-cleared module-owned versatile die is not restored by an expert tier', async () => {
+  const basic = fullySyncedState(battleAxe, 'proficient');
+  const items = [
+    {
+      _id: 'clear-zero-2',
+      img: basic.img,
+      flags: basic.flags,
+      system: basic.system,
+    },
+  ];
+  // The user clears the module-owned d10 versatile die to zero at Basic.
+  items[0].system.damage.versatile = { number: 0, denomination: 0, bonus: '', types: ['slashing'] };
+  const actor = makeActor(items);
+  const training = { items: { 'axes/battle-axe': 'expert' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  // Even at expert, where the module die would be d12, the user-cleared zero is
+  // preserved and never overwritten.
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileManual, true);
+
+  // A repeated sync writes nothing further.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a fresh legacy blank Versatile item still receives the module die', async () => {
+  const items = [
+    {
+      _id: 'fresh-blank-ver-1',
+      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
+      system: { proficient: 0 },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  // The blank item's Versatile value is genuinely absent, so the module writes
+  // the parsed two-handed die and claims ownership.
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+
+  // The first write is idempotent.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a real dnd5e default zero versatile object is reclaimed with the module die', async () => {
+  // A fresh/untracked dnd5e item that carries the `ver` property has its native
+  // schema default `versatile` object (number 0 / denomination 0), which is NOT
+  // user intent. With no module ownership and no manual marker, the module must
+  // be allowed to write its parsed two-handed die over that default zero.
+  const items = [
+    {
+      _id: 'default-zero-ver-1',
+      flags: { [FLAGS_KEY]: { catalogId: 'axes/battle-axe' } },
+      system: {
+        proficient: 0,
+        properties: ['rme-one-handed', 'rme-versatile', 'ver'],
+        damage: {
+          base: { number: 1, denomination: 8, bonus: '', types: ['slashing'] },
+          versatile: { number: 0, denomination: 0, bonus: '', types: [] },
+        },
+      },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Axes: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileManual, false);
+
+  // The first write is idempotent.
+  const second = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a module-cleared versatile die is restored when Versatile is re-granted', async () => {
+  const basic = fullySyncedState(battleAxe, 'proficient');
+  const items = [
+    {
+      _id: 'restore-ver-1',
+      img: basic.img,
+      flags: basic.flags,
+      system: basic.system,
+    },
+  ];
+  const actor = makeActor(items);
+
+  // Downgrade to Untrained (Two-Handed, no Versatile): the module clears the
+  // owned d10 die to a zero die and drops ownership, keeping the marker false.
+  const down = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'untrained' },
+  });
+  assert.equal(down.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 0,
+    denomination: 0,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, false);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, null);
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileManual, false);
+
+  // Re-grant Basic: because the module cleared the value (marker false), the
+  // cleared zero is reclaimed and the parsed d10 die is restored.
+  const up = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'proficient' },
+  });
+  assert.equal(up.length, 1);
+  assert.deepEqual(items[0].system.damage.versatile, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileDamage, true);
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeVersatileSnapshot, {
+    number: 1,
+    denomination: 10,
+    bonus: '',
+    types: ['slashing'],
+  });
+  assert.equal(items[0].flags[FLAGS_KEY].nativeVersatileManual, false);
+
+  // The restore is idempotent.
+  const second = await syncActorItems(actor, catalog.equipment, {
+    items: { 'axes/battle-axe': 'proficient' },
+  });
+  assert.deepEqual(second, []);
+});
+
+test('syncActorItems: a fully synced rifle carries no unsupported native keys', async () => {
+  const keysToCheck = ['amm', 'fir', 'hvy', 'lgt', 'lod', 'thr'];
+  const items = [{ _id: 'r1', ...fullySyncedState(boltActionRifle, 'proficient') }];
+  const actor = makeActor(items);
+  const training = { groups: { Firearms: 'proficient' } };
+
+  const updates = await syncActorItems(actor, catalog.equipment, training);
+  assert.deepEqual(updates, []);
+  for (const key of keysToCheck) {
+    assert.ok(!items[0].system.properties.includes(key), `unsupported native key ${key}`);
+  }
+  assert.deepEqual(items[0].flags[FLAGS_KEY].nativeProperties, ['two']);
+});
+
+test('syncActorItems: never clobbers user-added native properties', async () => {
+  const items = [
+    {
+      _id: 'nc1',
+      flags: { [FLAGS_KEY]: { catalogId: boltActionRifle.id } },
+      system: { proficient: 1, properties: ['fin', 'rch', 'fir'] },
+    },
+  ];
+  const actor = makeActor(items);
+  const training = { groups: { Firearms: 'proficient' } };
+
+  const first = await syncActorItems(actor, catalog.equipment, training);
+  assert.equal(first.length, 1);
+  const props = items[0].system.properties;
+  for (const key of ['fin', 'rch', 'fir']) {
+    assert.ok(props.includes(key), `user native property ${key} was clobbered`);
+  }
+
   const second = await syncActorItems(actor, catalog.equipment, training);
   assert.deepEqual(second, []);
 });

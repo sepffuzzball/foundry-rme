@@ -84,8 +84,10 @@ loaded rounds on fire. Firearms with Loading (#) use a magazine of that tier's
 capacity; when no Loading property is present, ammunition is spent directly. The
 Portable Ballista is direct but does not use a consumable
 stack: it spends an ordinary Javelin actor weapon stack, one javelin per shot.
-A magazine weapon exposes loaded/capacity and reload options. Native dnd5e
-ammunition consumption is not used, and turn costs are player enforced.
+A magazine weapon exposes loaded/capacity and reload options, and its row in an
+actor's inventory shows a `loaded/capacity` badge; the native Uses/charges
+tracker is not used for RME ammunition. Native dnd5e ammunition consumption is
+not used, and turn costs are player enforced.
 Cross-client concurrent shots can race: ammunition state is not coordinated
 across clients (no cross-client atomicity). The +1/+2 and elemental damage
 effects are applied automatically on attacked shots; saves, conditions, area
@@ -176,28 +178,46 @@ is invisible to derivation, so it is never surfaced as a gap. Those grants must
 be added as manual group/item overrides in the dialog. RME never guesses
 silently: what it sees and cannot map is surfaced for manual review. Save
 persists both training and provider-keyed choices and synchronizes supported
-module-owned fields.
+module-owned fields. The RME Training dialog's entire content scrolls, and the
+Save training button stays reachable outside the scrolling area.
 
-Tagged catalog Items also show an additive **RME Equipment** panel in the
-native dnd5e item Details tab. It displays the effective tier, RME properties,
-and all three source profiles without replacing native Proficiency or Mastery.
-On an owned actor's Item, **Manual item training** sets an item override;
-**Inherit** removes it. World Items and compendium previews use a non-persistent
-tier selector (compendium Items remain read-only). RME properties are reference
-information available while equipped, not tactical automation; the source item
-description and native mastery remain unchanged.
+Tagged catalog Items also show an additive **RME Equipment** panel at the top
+of the native dnd5e item Details tab. It displays the effective tier, RME
+properties, and all three source profiles without replacing native Proficiency
+or Mastery. Curated item descriptions are prose-only: the name heading, italic
+stat line, armor table row, tier rows, and the Expert Perk are stripped from the
+description, so nothing is duplicated between the panel and the description.
+The chat snippet is a short excerpt, and unidentified items use a generic name
+and appearance; the original full RME rule text stays available in the RME
+Catalog and the panel's source profiles. On an owned actor's Item, **Manual
+item training** sets an item override; **Inherit** removes it. World Items and
+compendium previews use a non-persistent tier selector (compendium Items remain
+read-only). RME properties are reference information available while equipped,
+not tactical automation; the native Mastery value is never touched. When a sync
+migrates a legacy actor item, its description fields are rewritten only while
+they are still the untouched legacy/blank form (or a placeholder icon), so a
+user edit to the description or icon is preserved.
 
 The catalog view contains all 173 equipment entries and 24 reference sections. Source markdown is displayed as escaped preformatted text, not interpreted HTML.
 
 ## Automation limitations
 
-Automation is intentionally limited. The module synchronizes only the training
-level and, for a weapon or natural weapon, only unambiguous single `Melee NdX` /
-`Ranged NdX(+N)` base damage (range is set only for a sole ranged profile; a tier
-with no single parseable profile is left for you to fill in). RME's tactical
-properties (Hipshot, Keen, Puncture, and so on) are not mapped into dnd5e native
-properties, and the fighting-style and spell/ability rule texts remain reference
-material - all of that stays manual.
+Automation is intentionally limited to what has a faithful, unambiguous native
+counterpart. The module synchronizes the module-owned fields: the training level
+applied to an actor's RME items, the selected RME profile (the tier rows that
+resolve at that level), and the parsed range and base damage for a weapon when a
+sole parseable attack profile exists (a tier with no single parseable profile is
+left for you to fill in). A conservative subset of shared RME weapon properties
+is promoted into native dnd5e keys - `two` (Two-Handed), `fin` (Finesse), melee
+`rch` (Reach), and `ver` (Versatile, with its parsed two-handed die) - while the
+rest of the granted RME properties are written only under the module's own
+`rme-*` namespace. Some RME properties are deliberately not mapped onto a native
+key because their mechanics differ or a native key would double-count: Heavy,
+Light, Loading, Reload, and Firearm are not promoted, and native ammunition
+management is skipped because the module tracks ammo itself. RME's extra
+half-Strength bonus on a two-handed melee/versatile weapon, and the tactical
+effects (Hipshot, Keen, Puncture, and so on), remain manual. The fighting-style
+and spell/ability rule texts stay reference material.
 
 The **RME Ammunition** pack follows the same limited-automation rule. Each stack
 carries a declared `flags.foundry-rme.effect` object (damage type, attack/damage
@@ -238,8 +258,30 @@ clients.
 - `rules/` - source markdown for the equipment catalog and references, included intentionally. Editing these is how you change the catalog.
 - `data/catalog.json` - the generated catalog, committed intentionally so the module runs without requiring a build step on install.
 - `data/ammunition.json` - the ammunition stack source (25 consumable entries) that the `build:packs` step compiles into the RME Ammunition pack.
+- `data/icon-map.json` - the catalog id to bundled icon-path map used as the attribution-audit source for the released icon set. It mirrors the runtime `src/icon-map.mjs` and is shipped with the release as a record of which icons are bundled.
+- `assets/icons/` - the offline bundled icon set (unmodified Game-icons.net originals, CC BY 3.0) referenced by the icon map and shipped with every release.
+- `ICON_ATTRIBUTION.md` - the per-icon attribution (author, upstream path, pinned source URL) for every bundled icon, shipped with the release.
 - `src/`, `tests/`, `scripts/`, `styles/`, `module.json` - the module code, tests, catalog build script, styles, and manifest.
 - `graphify-out/` - the local graphify knowledge-graph output. It is **ignored** (see `.gitignore`) and not part of the published module; regenerate it locally with `graphify update .` if you use it.
+
+## Bundled icons
+
+The module ships an offline set of equipment and ammunition icons
+under `assets/icons/` so item artwork is available the moment the module is
+installed, with no network access and no hotlinking to an external host. Every
+icon is sourced from the
+[Game-icons.net icon set](https://game-icons.net/) and is an unmodified official
+original distributed under the
+[Creative Commons Attribution 3.0 Unported (CC BY 3.0)](https://creativecommons.org/licenses/by/3.0/)
+license.
+
+The icons are bundled offline, so they keep working even when Foundry has no
+outbound connection. The full per-icon credits - author, upstream source path,
+and the pinned source URL - are recorded in
+[`ICON_ATTRIBUTION.md`](ICON_ATTRIBUTION.md), which is included with every
+release alongside the icons. The module and its items reference only the
+bundled `assets/icons/` files; no icon is pulled from a CDN or external URL at
+runtime.
 
 ## License
 

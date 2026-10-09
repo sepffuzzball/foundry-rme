@@ -20,6 +20,9 @@
 //       OUT_DIR/package/styles/
 //       OUT_DIR/package/data/catalog.json
 //       OUT_DIR/package/data/ammunition.json
+//       OUT_DIR/package/data/icon-map.json
+//       OUT_DIR/package/assets/icons/
+//       OUT_DIR/package/ICON_ATTRIBUTION.md
 //       OUT_DIR/package/packs/weapons/
 //       OUT_DIR/package/packs/armor/
 //       OUT_DIR/package/packs/shields/
@@ -73,6 +76,9 @@ function pathsFor(projectRoot) {
     stylesDir: join(projectRoot, 'styles'),
     catalogJson: join(projectRoot, 'data', 'catalog.json'),
     ammunitionJson: join(projectRoot, 'data', 'ammunition.json'),
+    iconMapJson: join(projectRoot, 'data', 'icon-map.json'),
+    assetsDir: join(projectRoot, 'assets', 'icons'),
+    iconAttribution: join(projectRoot, 'ICON_ATTRIBUTION.md'),
     packsDir: join(projectRoot, 'packs'),
   };
 }
@@ -190,6 +196,82 @@ function validateAmmunition(paths) {
   ) {
     fail('data/ammunition.json does not look like a built ammunition source');
   }
+}
+
+// The runtime resolves every catalog icon to assets/icons/<file>.svg, so the
+// bundled icon set is a required release input. Collect every .svg regular file
+// under an assets/icons tree, recursively. Any other regular file is rejected,
+// because the bundled set is defined to contain only SVG art.
+function collectSvgFiles(dir) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...collectSvgFiles(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith('.svg')) {
+      found.push(entryPath);
+    } else if (entry.isFile()) {
+      fail(`assets/icons must contain only .svg files, found: ${entryPath}`);
+    }
+  }
+  return found;
+}
+
+// assets/icons is required and must not be empty: a release cannot ship without
+// the icons the icon map points at.
+function validateIconAssets(paths) {
+  assertDir(paths.assetsDir, 'assets/icons');
+  const svgFiles = collectSvgFiles(paths.assetsDir);
+  if (svgFiles.length === 0) {
+    fail('assets/icons is empty; it must ship at least one bundled SVG icon');
+  }
+}
+
+// A mapped icon path must be a safe, relative file reference under the bundled
+// assets/icons tree: exactly the runtime prefix, then a single plain filename.
+// This rejects absolute paths, `..` traversal, and stray directory segments.
+const ICON_PATH_PREFIX = 'modules/foundry-rme/assets/icons/';
+const ICON_FILE_RE = /^[a-z0-9-]+\.svg$/;
+
+function assertSafeIconPath(mappedPath) {
+  if (!mappedPath.startsWith(ICON_PATH_PREFIX)) {
+    fail(
+      `icon map path is not under modules/foundry-rme/assets/icons/: ${mappedPath}`
+    );
+  }
+  const rel = mappedPath.slice(ICON_PATH_PREFIX.length);
+  if (!ICON_FILE_RE.test(rel)) {
+    fail(`icon map path is not a safe assets/icons filename: ${mappedPath}`);
+  }
+  return rel;
+}
+
+// data/icon-map.json is the attribution-audit source for the bundled icons. It
+// is required at the packaging gate: every mapped path must be a safe prefix
+// under assets/icons and must reference a file that is actually present, so a
+// release can never bundle an icon the map points at but does not contain.
+function validateIconMap(paths) {
+  if (!existsSync(paths.iconMapJson)) {
+    fail('data/icon-map.json is missing; run `npm run build:catalog` or restore it');
+  }
+  assertFile(paths.iconMapJson, 'data/icon-map.json');
+  let iconMap;
+  try {
+    iconMap = JSON.parse(readFileSync(paths.iconMapJson, 'utf8'));
+  } catch {
+    fail('data/icon-map.json is not valid JSON');
+  }
+  if (!iconMap || typeof iconMap !== 'object' || Array.isArray(iconMap)) {
+    fail('data/icon-map.json is not an object mapping catalog ids to icon paths');
+  }
+  for (const [id, mappedPath] of Object.entries(iconMap)) {
+    const rel = assertSafeIconPath(mappedPath);
+    const iconPath = join(paths.assetsDir, rel);
+    if (!existsSync(iconPath) || !statSync(iconPath).isFile()) {
+      fail(`icon map entry ${id} references a missing icon file: ${mappedPath}`);
+    }
+  }
+  return iconMap;
 }
 
 // A compiled Foundry compendium pack is a LevelDB directory. The reliable
@@ -318,6 +400,9 @@ function main() {
   assertDir(paths.stylesDir, 'styles');
   validateCatalog(paths);
   validateAmmunition(paths);
+  validateIconAssets(paths);
+  validateIconMap(paths);
+  assertFile(paths.iconAttribution, 'ICON_ATTRIBUTION.md');
   validatePackManifest(sourceManifest);
 
   // Every pack must exist and be an actual compiled LevelDB directory. This
@@ -365,6 +450,16 @@ function main() {
   // the raw rules/ markdown). It is required, not optional, and was validated
   // above.
   copyFileSync(paths.ammunitionJson, join(packageDir, 'data', 'ammunition.json'));
+  // The icon map is the attribution-audit source for the bundled icons. The
+  // module runtime resolves icons through src/icon-map.mjs, but shipping the
+  // JSON map alongside lets the release be audited against the bundled set.
+  copyFileSync(paths.iconMapJson, join(packageDir, 'data', 'icon-map.json'));
+
+  // Stage the bundled icons and attribution. The icons live under assets/icons/
+  // and are required at runtime: every icon-map path resolves there, so they
+  // must be archived (never hotlinked) with each release.
+  copyDirRecursive(paths.assetsDir, join(packageDir, 'assets', 'icons'));
+  copyFileSync(paths.iconAttribution, join(packageDir, 'ICON_ATTRIBUTION.md'));
 
   // Stage the compiled compendium packs under package/packs/<name> so they are
   // archived alongside the rest of the module payload.
@@ -380,12 +475,22 @@ function main() {
   copyFileSync(stagedManifest, distManifest);
 
   // Archive from the package dir so module.json lands at the archive root,
-  // not under a package/ folder. Only the module payload and compiled packs
-  // are zipped.
+  // not under a package/ folder. Only the module payload, compiled packs, and
+  // the bundled icon assets are zipped.
   try {
     execFileSync(
       'zip',
-      ['-r', zipPath, 'module.json', 'src', 'styles', 'data', 'packs'],
+      [
+        '-r',
+        zipPath,
+        'module.json',
+        'src',
+        'styles',
+        'data',
+        'packs',
+        'assets',
+        'ICON_ATTRIBUTION.md',
+      ],
       {
         cwd: packageDir,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -414,7 +519,7 @@ function main() {
   console.log(`release.json:       ${releasePath}`);
   console.log(`release version:    ${releaseVersion} (tag ${tag})`);
   console.log(`repository:         ${repository}`);
-  console.log('archive contents (module.json at root, src, styles, data/catalog.json, packs/{weapons,armor,shields,ammunition}):');
+  console.log('archive contents (module.json at root, src, styles, data/catalog.json, data/ammunition.json, data/icon-map.json, assets/icons/, ICON_ATTRIBUTION.md, packs/{weapons,armor,shields,ammunition}):');
   execFileSync('zip', ['-sf', zipPath], {
     stdio: 'inherit',
   });

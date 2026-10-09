@@ -104,6 +104,9 @@ async function makeFixtureRoot() {
   mkdirSync(join(root, 'data'), { recursive: true });
   copyFileSync(join(ROOT, 'data', 'catalog.json'), join(root, 'data', 'catalog.json'));
   copyFileSync(join(ROOT, 'data', 'ammunition.json'), join(root, 'data', 'ammunition.json'));
+  copyFileSync(join(ROOT, 'data', 'icon-map.json'), join(root, 'data', 'icon-map.json'));
+  cpSync(join(ROOT, 'assets', 'icons'), join(root, 'assets', 'icons'), { recursive: true });
+  copyFileSync(join(ROOT, 'ICON_ATTRIBUTION.md'), join(root, 'ICON_ATTRIBUTION.md'));
 
   await buildPacks({ root });
   return root;
@@ -164,6 +167,24 @@ test('package staging area contains only the module payload', () => {
       existsSync(join(pkg, 'data', 'ammunition.json')),
       'package/data/ammunition.json'
     );
+    assert.ok(
+      existsSync(join(pkg, 'data', 'icon-map.json')),
+      'package/data/icon-map.json'
+    );
+
+    // The bundled icons, attribution, and the audit source are part of the payload.
+    assert.ok(
+      existsSync(join(pkg, 'assets', 'icons')),
+      'package/assets/icons'
+    );
+    assert.ok(
+      readdirSync(join(pkg, 'assets', 'icons')).some((f) => f.endsWith('.svg')),
+      'package/assets/icons must contain a bundled SVG'
+    );
+    assert.ok(
+      existsSync(join(pkg, 'ICON_ATTRIBUTION.md')),
+      'package/ICON_ATTRIBUTION.md'
+    );
 
     // The compiled compendium packs are part of the module payload.
     for (const pack of PACKS) {
@@ -178,7 +199,15 @@ test('package staging area contains only the module payload', () => {
     }
 
     const top = readdirSync(pkg).sort();
-    assert.deepEqual(top, ['data', 'module.json', 'packs', 'src', 'styles']);
+    assert.deepEqual(top, [
+      'ICON_ATTRIBUTION.md',
+      'assets',
+      'data',
+      'module.json',
+      'packs',
+      'src',
+      'styles',
+    ]);
 
     // Non-module sources must not be staged.
     assert.ok(!existsSync(join(pkg, 'rules')));
@@ -211,6 +240,14 @@ test('archive lists module.json at root, including runtime, catalog, and packs',
     assert.ok(lines.includes('styles/rme.css'), 'styles included');
     assert.ok(lines.includes('data/catalog.json'), 'catalog included');
     assert.ok(lines.includes('data/ammunition.json'), 'ammunition included');
+    assert.ok(lines.includes('data/icon-map.json'), 'icon map included');
+    assert.ok(lines.includes('ICON_ATTRIBUTION.md'), 'attribution included');
+
+    // The bundled icon set must be archived (offline, never hotlinked).
+    const iconFiles = lines.filter(
+      (l) => l.startsWith('assets/icons/') && l.endsWith('.svg')
+    );
+    assert.ok(iconFiles.length > 0, 'at least one bundled icon archived');
 
     // Every compiled pack directory with its LevelDB records must be present.
     for (const pack of PACKS) {
@@ -347,6 +384,98 @@ test('rejects when data/ammunition.json is missing', () => {
       );
     } finally {
       rmSync(bareRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test('rejects when an icon referenced by the icon map is missing', () => {
+  withTempOut((outDir) => {
+    // Start from a fully built fixture and delete one mapped icon file.
+    const root = mkdtempSync(join(tmpdir(), 'foundry-rme-missing-icon-'));
+    try {
+      cpSync(fixtureRoot, root, { recursive: true });
+      rmSync(join(root, 'assets', 'icons', 'lorc-battle-axe.svg'));
+
+      const res = runRelease({
+        outDir,
+        root,
+        runNumber: '1',
+        expectFailure: true,
+      });
+      assert.equal(
+        res.ok,
+        false,
+        'packaging must fail when a mapped icon file is missing'
+      );
+      assert.notEqual(res.status, 0);
+      assert.match(
+        res.output,
+        /lorc-battle-axe\.svg/,
+        'failure must name the missing mapped icon'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('rejects when ICON_ATTRIBUTION.md is missing', () => {
+  withTempOut((outDir) => {
+    const root = mkdtempSync(join(tmpdir(), 'foundry-rme-no-attribution-'));
+    try {
+      cpSync(fixtureRoot, root, { recursive: true });
+      rmSync(join(root, 'ICON_ATTRIBUTION.md'));
+
+      const res = runRelease({
+        outDir,
+        root,
+        runNumber: '1',
+        expectFailure: true,
+      });
+      assert.equal(
+        res.ok,
+        false,
+        'packaging must fail without ICON_ATTRIBUTION.md'
+      );
+      assert.notEqual(res.status, 0);
+      assert.match(
+        res.output,
+        /ICON_ATTRIBUTION\.md/,
+        'failure must name the missing attribution file'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('rejects when assets/icons is empty', () => {
+  withTempOut((outDir) => {
+    const root = mkdtempSync(join(tmpdir(), 'foundry-rme-empty-icons-'));
+    try {
+      cpSync(fixtureRoot, root, { recursive: true });
+      rmSync(join(root, 'assets', 'icons'), { recursive: true, force: true });
+      mkdirSync(join(root, 'assets', 'icons'), { recursive: true });
+
+      const res = runRelease({
+        outDir,
+        root,
+        runNumber: '1',
+        expectFailure: true,
+      });
+      assert.equal(
+        res.ok,
+        false,
+        'packaging must fail when assets/icons is empty'
+      );
+      assert.notEqual(res.status, 0);
+      assert.match(
+        res.output,
+        /assets\/icons is empty/,
+        'failure must name the empty icons directory'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

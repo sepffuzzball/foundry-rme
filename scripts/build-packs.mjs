@@ -48,6 +48,8 @@ import { createHash } from 'node:crypto';
 import { compilePack } from '@foundryvtt/foundryvtt-cli';
 
 import { makeItemData } from '../src/items.mjs';
+import { ammoDescriptions } from '../src/item-descriptions.mjs';
+import { ICON_MAP } from '../src/icon-map.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -89,22 +91,6 @@ function ammoId(entryId) {
   return createHash('sha256').update(`ammo/${entryId}`, 'utf8').digest('hex').slice(0, 16);
 }
 
-// Escape HTML so the ammo description renders as literal text (never injected).
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// The ammo description is plain explanatory text wrapped in a <pre> block so it
-// renders literally, matching the equipment pack convention.
-function ammoDescription(text) {
-  return `<pre>${escapeHtml(text)}</pre>`;
-}
-
 // Build one ammunition pack source document from a data/ammunition.json entry.
 // Consumable ammunition carries dnd5e fields explicitly: type 'consumable',
 // system.type {value:'ammo', subtype:'rme-<family>'}, a stack quantity, a zero
@@ -114,18 +100,27 @@ function ammoDescription(text) {
 function ammoDocument(entry) {
   const id = ammoId(entry.id);
   const unitPrice = entry.stackCostGp / entry.quantity;
+  const descriptions = ammoDescriptions(entry);
 
   const doc = {
     _id: id,
     _key: `!items!${id}`,
     name: entry.name,
     type: 'consumable',
+    img: ICON_MAP[entry.id],
     system: {
       type: { value: 'ammo', subtype: `rme-${entry.family}` },
       quantity: entry.quantity,
       weight: { value: 0, units: 'lb' },
       price: { value: unitPrice, denomination: 'gp' },
-      description: { value: ammoDescription(entry.description) },
+      description: {
+        value: descriptions.identifiedHtml,
+        chat: descriptions.chatHtml,
+      },
+      unidentified: {
+        name: descriptions.unidentifiedName,
+        description: descriptions.unidentifiedHtml,
+      },
     },
     flags: {
       'foundry-rme': {
@@ -183,6 +178,7 @@ function itemDocument(entry) {
     _key: `!items!${id}`,
     name: data.name,
     type: data.type,
+    img: data.img,
     system: data.system,
     flags: data.flags,
   };
