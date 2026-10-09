@@ -55,7 +55,7 @@ export const ATTACK_ID = 'rmeAttack0000000';
 
 // Explicit armor-name -> dnd5e armor category. The catalog derives armor names
 // from the Armor.md table rows, so this is a fixed lookup rather than a guess.
-const ARMOR_TYPE_BY_NAME = {
+export const ARMOR_TYPE_BY_NAME = {
   Padded: 'light',
   Leather: 'light',
   Studded: 'light',

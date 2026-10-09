@@ -72,6 +72,15 @@ test('runtime exposes service methods and escapes catalog-facing content', async
   assert.match(source, /<pre class="rme-source">\$\{esc\(/);
 });
 
+test('actor render hook handles Details targets even without inventory rows', async () => {
+  const source = await readFile(new URL('../src/main.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const hasInventory = Boolean\(element\?\.querySelector\?\.\('li\.item\[data-item-id\]'\)\)/);
+  assert.match(source, /const hasDetails = Boolean\(element\?\.querySelector\?\.\('section\[data-tab="details"\] \.right'\)\)/);
+  assert.match(source, /if \(hasInventory\) renderActorAmmoBadges/);
+  assert.match(source, /if \(hasDetails\) renderActorRmeProficiencies/);
+  assert.doesNotMatch(source, /if \(!element\?\.querySelector\?\.\('li\.item\[data-item-id\]'\)\) return/);
+});
+
 test('runtime uses v14 DialogV2 and exposes actor-sheet catalog access without a console', async () => {
   const source = await readFile(new URL('../src/main.mjs', import.meta.url), 'utf8');
   assert.match(source, /foundry\.applications\.api\.DialogV2/);

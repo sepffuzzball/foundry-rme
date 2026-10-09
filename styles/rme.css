@@ -53,4 +53,25 @@
 .rme-ammo-warning { color:var(--color-level-warning,#8a5b00); font-weight:600; }
 .rme-magazine-badge { display:inline-block; margin-inline-start:.35rem; padding:.08rem .35rem; border:1px solid var(--color-border-light-2, #777); border-radius:999px; background:color-mix(in srgb, var(--color-text-light-0, #fff) 88%, transparent); color:var(--color-text-dark-primary, #222); font-size:.72em; font-weight:700; line-height:1.35; white-space:nowrap; vertical-align:middle; }
 [data-theme="dark"] .rme-magazine-badge { background:color-mix(in srgb, var(--color-text-dark-1, #222) 88%, transparent); color:var(--color-text-light-1, #eee); }
+
+/* Read-only actor Details view for effective RME training. */
+.rme-proficiencies { margin:1rem 0; padding:.8rem 1rem; border:1px solid var(--color-border-light-2); border-inline-start:4px solid #9c5639; border-radius:8px; }
+.rme-proficiency-section + .rme-proficiency-section { margin-top:.8rem; padding-top:.6rem; border-top:1px solid var(--color-border-light-2); }
+.rme-proficiency-section h3 { margin:0 0 .4rem; font-size:1rem; }
+.rme-proficiency-list { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; }
+.rme-proficiency-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem; }
+.rme-proficiency-item { padding-inline-start:1.25rem; font-size:.92em; }
+.rme-proficiency-badge { display:inline-block; padding:.08rem .4rem; border:1px solid var(--color-border-light-2); border-radius:999px; background:var(--color-bg-option, #eee); color:var(--color-text-dark-primary, #222); font-size:.75em; font-weight:700; line-height:1.4; }
+.rme-proficiency-expert { border-color:#603400; background:#7a3e00; color:#fff; }
+[data-theme="dark"] .rme-proficiency-badge { background:#333; color:#fff; }
+[data-theme="dark"] .rme-proficiency-expert { background:#f0a442; border-color:#ffd28c; color:#211300; }
+.rme-proficiency-exceptions { flex:0 0 100%; min-width:0; font-size:.82em; }
+.rme-proficiency-exceptions summary { display:list-item; width:max-content; max-width:100%; padding:.12rem .25rem; border-radius:3px; cursor:pointer; color:var(--color-text-dark-primary, #222); text-decoration:underline; text-underline-offset:2px; }
+.rme-proficiency-exceptions summary:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
+.rme-proficiency-exceptions ul { margin:.25rem 0 .15rem 1.25rem; padding-inline-start:.75rem; list-style:disc; }
+.rme-proficiency-exceptions li { display:list-item; margin:.12rem 0; overflow-wrap:anywhere; }
+@media (max-width:600px) {
+  .rme-proficiency-exceptions { flex-basis:100%; }
+  .rme-proficiency-exceptions ul { margin-inline-start:.5rem; }
+}
 @media(max-width:600px) { .rme-item-heading { display:block; } .rme-item-tier { margin:.4rem 0; } .rme-item-properties { columns:1; } }

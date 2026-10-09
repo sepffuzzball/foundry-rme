@@ -143,6 +143,13 @@ derives the actor's RME weapon/armor training and synchronizes the actor's
 catalog Items to the result. Derivation does not run the native dnd5e class
 advancement; it follows source-specific rules.
 
+Character sheets also show a read-only **RME Armor** and **RME Weapons** summary
+in the Details tab beside the native proficiency pills. Expert tiers are marked
+with an Expert badge; expand the exception count to see each item's actual
+training, including exclusions - this works by keyboard. If a group is not
+trained, its positive individual items appear instead. These RME summaries do
+not edit or replace native dnd5e armor or weapon traits.
+
 - **Classes** are resolved through the RME ClassTraining table
   (included as `rules/ClassTraining.md`), not just their Trait advancements. A
   recognized class identifier drives the class's weapon-category and

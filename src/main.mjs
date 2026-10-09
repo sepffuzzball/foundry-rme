@@ -17,6 +17,7 @@ import {
 import { handleAmmoAttackRoll, handleAmmoDamageConfig } from './ammo-rolls.mjs';
 import { ammoEffect } from './ammo-effects.mjs';
 import { renderActorAmmoBadges } from './actor-ammo-badge.mjs';
+import { renderActorRmeProficiencies } from './actor-proficiencies.mjs';
 
 const ID = 'foundry-rme';
 let catalog;
@@ -319,8 +320,13 @@ Hooks.once('init',()=>{
 const itemParentActor = (item) => item?.parent;
 Hooks.on('renderApplicationV2', (app, element) => {
   if (app?.document?.documentName === 'Actor') {
-    if (!element?.querySelector?.('li.item[data-item-id]')) return;
-    fetchCatalog().then((data) => renderActorAmmoBadges(app, element, data.equipment)).catch(notifyError);
+    const hasInventory = Boolean(element?.querySelector?.('li.item[data-item-id]'));
+    const hasDetails = Boolean(element?.querySelector?.('section[data-tab="details"] .right'));
+    if (!hasInventory && !hasDetails) return;
+    fetchCatalog().then((data) => {
+      if (hasInventory) renderActorAmmoBadges(app, element, data.equipment);
+      if (hasDetails) renderActorRmeProficiencies(app, element, data.equipment);
+    }).catch(notifyError);
     return;
   }
   const item = app?.document;
